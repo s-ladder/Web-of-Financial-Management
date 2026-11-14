@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f6f7f5">
+    <meta name="description" content="分寸是一份安静、清晰、属于自己的个人记账本。">
+    <title>分寸 · 把日子过明白</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" type="module"></script>
+  </head>
+  <body>
+    <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/></symbol>
+      <symbol id="i-receipt" viewBox="0 0 24 24"><path d="M5 3.5h14v17l-3-2-4 2-4-2-3 2z"/><path d="M9 8h6m-6 4h6"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3.5v11m-4-4 4 4 4-4"/><path d="M4.5 16.5v4h15v-4"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15.5v-11m-4 4 4-4 4 4"/><path d="M4.5 16.5v4h15v-4"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.6"/><path d="m16 16 4 4"/></symbol>
+      <symbol id="i-trend" viewBox="0 0 24 24"><path d="M3.5 18.5 9 12l4 3 7.5-9m-6 0h6v6"/></symbol>
+      <symbol id="i-wallet" viewBox="0 0 24 24"><rect x="3.5" y="6" width="17" height="14" rx="2.2"/><path d="M3.5 9.5h17m-5 5h2m-12-11h11"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="15" rx="2"/><path d="M7.5 3v5m9-5v5m-13 1.5h17M8 13h2m4 0h2m-8 3.5h2m4 0h2"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+      <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+      <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14m-6-6 6 6 6-6"/></symbol>
+      <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6M9 12h12"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16m-14 0 .9 13h10.2L18 7M9 7V4h6v3m-5 4v5m4-5v5"/></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="m14 5 5 5M4 20l4.5-1 11-11a2.1 2.1 0 0 0-3-3l-11 11z"/><path d="M13 20h7"/></symbol>
+      <symbol id="i-coffee" viewBox="0 0 24 24"><path d="M5 8h12v7a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4zM17 10h1.5a2.5 2.5 0 0 1 0 5H17"/><path d="M8 3v2m5-2v2"/></symbol>
+      <symbol id="i-train" viewBox="0 0 24 24"><rect x="5" y="3.5" width="14" height="15" rx="4"/><path d="M8.5 18.5 6 21m9.5-2.5 2.5 2.5M5.5 14h13M9 8h6m-6 8.5h.01m6 0h.01"/></symbol>
+      <symbol id="i-bag" viewBox="0 0 24 24"><path d="M5 8h14l1 12H4z"/><path d="M9 9V6a3 3 0 0 1 6 0v3"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 1 4 17.5zM4 6v12m4-11h8"/></symbol>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="m3.5 10 8.5-7 8.5 7v10a1 1 0 0 1-1 1H4.5a1 1 0 0 1-1-1z"/><path d="M9 21v-8h6v8"/></symbol>
+      <symbol id="i-film" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="m10 9 5 3-5 3z"/></symbol>
+      <symbol id="i-pill" viewBox="0 0 24 24"><path d="M9.5 4a5.5 5.5 0 0 1 7.8 7.8l-5.5 5.5A5.5 5.5 0 1 1 4 9.5z"/><path d="m8 16 8-8"/></symbol>
+      <symbol id="i-gift" viewBox="0 0 24 24"><path d="M4 11h16v10H4zM3 7h18v4H3zM12 7v14"/><path d="M12 7H8a2.5 2.5 0 1 1 2.5-2.5V7Zm0 0h4a2.5 2.5 0 1 0-2.5-2.5V7Z"/></symbol>
+      <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5.5"/><circle cx="12" cy="12" r="2"/></symbol>
+      <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="m12 3 1.9 5.7L20 11l-6.1 2.3L12 19l-2.1-5.7L4 11l5.9-2.3L12 3Z"/><path d="m19 14 1.2 2.4L22.5 17 20.2 18l-1.2 2.5-1-2.5-2.5-1 2.5-.6L19 14Z"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+    </svg>
+
+    <main id="app" class="app-shell">
+      <section id="auth-screen" class="auth-screen" hidden aria-label="登录或注册">
+        <div class="auth-brand"><span class="brand-mark" aria-hidden="true">寸</span><span class="brand-name">分寸</span></div>
+        <div class="auth-layout">
+          <div class="auth-story">
+            <span class="eyebrow">YOUR DAYS, IN BALANCE</span>
+            <h1>认真生活，<br>也认真记录。</h1>
+            <p>不是每一笔都要被计算，<br>只是让每一天过得更有数。</p>
+            <span class="auth-story-annotation"><svg class="icon"><use href="#i-sparkle"/></svg> 一点点记下，慢慢看见生活的轮廓</span>
+          </div>
+          <form id="auth-form" class="auth-form">
+            <div class="auth-form-heading"><span class="eyebrow">WELCOME TO FENCUN</span><h2 id="auth-title">欢迎回来</h2><p id="auth-subtitle">登录你的个人账本</p></div>
+            <label id="name-field" class="field" hidden><span>怎么称呼你</span><input name="name" autocomplete="nickname" placeholder="你的昵称" minlength="2" maxlength="32"></label>
+            <label class="field"><span>邮箱</span><input name="email" type="email" autocomplete="email" placeholder="name@example.com" required maxlength="254"></label>
+            <label class="field"><span>密码</span><input name="password" type="password" autocomplete="current-password" placeholder="至少 8 位，含字母和数字" required minlength="8" maxlength="72"></label>
+            <p id="auth-error" class="form-error" role="alert" hidden></p>
+            <button id="auth-submit" class="button button-primary button-full" type="submit">登录 <svg class="icon"><use href="#i-chevron"/></svg></button>
+            <div id="demo-divider" class="auth-divider" hidden><span>或者</span></div>
+            <button id="demo-login" class="button button-outline button-full" type="button" hidden>试用演示账本</button>
+            <p class="auth-switch-line"><span id="auth-switch-label">还没有账号？</span> <button id="auth-switch" class="text-button" type="button">创建账户</button></p>
+            <p class="auth-terms">注册即表示你了解，账号与账本数据保存在本机。</p>
+          </form>
+        </div>
+        <footer class="auth-footer"><span>分寸 · 个人生活账本</span><span>让每一分，都有分寸。</span></footer>
+      </section>
+
+      <div id="workspace" class="workspace" hidden>
+        <aside class="sidebar">
+          <a class="brand" href="#overview" aria-label="分寸首页"><span class="brand-mark" aria-hidden="true">寸</span><span class="brand-name">分寸<span class="brand-sub">PERSONAL LEDGER</span></span></a>
+          <span class="nav-section-label">工作台</span>
+          <nav class="main-nav" aria-label="主导航">
+            <button class="nav-link is-active" data-view="overview"><svg class="icon"><use href="#i-grid"/></svg><span>总览</span></button>
+            <button class="nav-link" data-view="transactions"><svg class="icon"><use href="#i-receipt"/></svg><span>收支明细</span><span id="nav-count" class="nav-count">0</span></button>
+          </nav>
+          <section class="sidebar-rule"><span class="nav-section-label">本月概览</span><div class="sidebar-rule-label"><span>生活支出</span><strong id="budget-spent-small">¥0</strong></div><div class="budget-progress-track"><span id="budget-progress-small"></span></div><p id="budget-caption-small">支出占收入 0%</p></section>
+          <div class="sidebar-bottom"><div class="sidebar-note"><svg class="icon"><use href="#i-sparkle"/></svg><p>理性规划，<br>也别忘了好好生活。</p></div><div class="sidebar-account"><span id="account-avatar" class="avatar">林</span><span class="account-info"><strong id="account-name">林同学</strong><span id="account-email">demo@fencun.local</span></span><button id="logout-button" class="icon-button logout-button" type="button" aria-label="退出登录" title="退出登录"><svg class="icon"><use href="#i-arrow-left"/></svg></button></div></div>
+        </aside>
+
+        <section class="main-panel">
+          <header class="topbar"><div id="breadcrumb" class="breadcrumb"><span>工作台</span><svg class="icon"><use href="#i-chevron"/></svg><strong id="breadcrumb-current">总览</strong></div><div class="topbar-right"><span id="today-label" class="today-label"></span><button id="quick-add" class="button button-primary topbar-add" type="button"><svg class="icon"><use href="#i-plus"/></svg><span>记一笔</span></button></div></header>
+
+          <div class="page-content">
+            <section id="overview-view" class="page-view" aria-label="账本总览">
+              <div class="welcome-row"><div><span class="eyebrow" id="welcome-date">今天也要过得有分寸</span><h1 id="welcome-title">早上好，林同学 <span class="greeting-dot">。</span></h1><p>一笔一笔，把日子记得明明白白。</p></div><label class="month-picker"><svg class="icon"><use href="#i-calendar"/></svg><input id="overview-month" type="month" aria-label="选择统计月份"></label></div>
+
+              <div class="stat-grid" aria-label="月度收支汇总">
+                <article class="stat-card"><div class="stat-label"><span class="stat-dot expense-dot"></span>本月支出</div><div id="stat-expenses" class="stat-value">¥0.00</div><div class="stat-foot"><span id="stat-expense-count">0 笔记录</span><span class="stat-corner"><svg class="icon"><use href="#i-arrow-down"/></svg></span></div><span class="stat-decoration expense-decoration" aria-hidden="true">支</span></article>
+                <article class="stat-card"><div class="stat-label"><span class="stat-dot income-dot"></span>本月收入</div><div id="stat-income" class="stat-value">¥0.00</div><div class="stat-foot"><span>按实际入账统计</span><span class="stat-corner"><svg class="icon"><use href="#i-arrow-up"/></svg></span></div><span class="stat-decoration income-decoration" aria-hidden="true">入</span></article>
+                <article class="stat-card balance-card"><div class="stat-label"><span class="stat-dot balance-dot"></span>结余</div><div id="stat-balance" class="stat-value">¥0.00</div><div class="stat-foot"><span>收入 · 支出</span><span class="balance-status"><svg class="icon"><use href="#i-sparkle"/></svg> 本月收支</span></div><span class="stat-decoration balance-decoration" aria-hidden="true">余</span></article>
+              </div>
+
+              <div class="analysis-grid">
+                <section class="panel chart-panel" aria-labelledby="trend-title"><div class="panel-heading"><div><span class="panel-kicker">INCOME & EXPENSE</span><h2 id="trend-title">收支走势</h2></div><div class="chart-legend"><span><i class="legend-dot legend-expense"></i>支出</span><span><i class="legend-dot legend-income"></i>收入</span></div></div><div id="trend-chart" class="trend-chart"><p class="chart-empty">收支数据正在加载</p></div><div class="chart-foot"><span><span class="chart-foot-dot"></span> 最近六个月的收支变化</span><span id="chart-month-total"></span></div></section>
+                <section class="panel category-panel" aria-labelledby="category-title"><div class="panel-heading"><div><span class="panel-kicker">WHERE IT GOES</span><h2 id="category-title">支出分类</h2></div><button class="icon-button subtle-button" type="button" data-view="transactions" aria-label="查看全部收支明细" title="查看收支明细"><svg class="icon"><use href="#i-chevron"/></svg></button></div><div id="category-list" class="category-list"><p class="chart-empty">分类正在加载</p></div><div class="category-foot"><span id="category-caption">本月主要支出分类</span><svg class="icon"><use href="#i-trend"/></svg></div></section>
+              </div>
+
+              <section class="panel recent-panel" aria-labelledby="recent-title"><div class="panel-heading recent-heading"><div><span class="panel-kicker">A LITTLE EVERY DAY</span><h2 id="recent-title">最近记录</h2></div><button class="text-button view-all-button" type="button" data-view="transactions">查看全部 <svg class="icon"><use href="#i-chevron"/></svg></button></div><div id="recent-list" class="transaction-list"><p class="chart-empty">记录正在加载</p></div></section>
+
+              <section class="closing-note"><svg class="icon"><use href="#i-sparkle"/></svg><span>收支有度，心里有数。</span><span class="closing-note-line"></span><span>记录生活，不定义生活。</span></section>
+            </section>
+
+            <section id="transactions-view" class="page-view" aria-label="收支明细" hidden>
+              <div class="records-title-row"><div><span class="eyebrow">YOUR FINANCIAL STORY</span><h1>收支明细</h1><p>每一笔日常，都值得认真记下。</p></div><label class="month-picker"><svg class="icon"><use href="#i-calendar"/></svg><input id="records-month" type="month" aria-label="选择记录月份"></label></div>
+              <section class="panel records-panel"><div class="records-toolbar"><div class="filter-tabs" role="group" aria-label="按收支类型筛选"><button class="filter-tab is-selected" data-filter="all" type="button">全部</button><button class="filter-tab" data-filter="expense" type="button">支出</button><button class="filter-tab" data-filter="income" type="button">收入</button></div><div class="records-actions"><label class="search-box"><svg class="icon"><use href="#i-search"/></svg><input id="record-search" type="search" placeholder="搜索分类或备注" aria-label="搜索分类或备注"><kbd>⌘ F</kbd></label><span class="toolbar-divider"></span><button id="import-button" class="button button-outline action-button" type="button"><svg class="icon"><use href="#i-upload"/></svg><span>导入</span></button><button id="export-button" class="button button-outline action-button" type="button"><svg class="icon"><use href="#i-download"/></svg><span>导出</span></button><input id="import-file" type="file" accept=".csv,text/csv,text/plain" hidden></div></div><div class="records-table-wrap"><table class="records-table"><thead><tr><th scope="col">分类</th><th scope="col">备注</th><th scope="col">日期</th><th scope="col">金额</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead><tbody id="records-body"></tbody></table><div id="records-empty" class="empty-state" hidden><span class="empty-icon"><svg class="icon"><use href="#i-receipt"/></svg></span><strong>还没有找到记录</strong><span>换个日期或分类看看，或者记下第一笔生活。</span><button class="button button-outline action-button" data-empty-add type="button"><svg class="icon"><use href="#i-plus"/></svg>记一笔</button></div></div><footer class="records-footer"><span id="record-count">共 0 条记录</span><span>展示当前筛选范围内的记录</span></footer></section>
+              <div class="records-tip"><svg class="icon"><use href="#i-sparkle"/></svg><span>账本是自己的，分寸也是自己的。</span><button id="template-download" class="text-button" type="button">下载 CSV 模板 <svg class="icon"><use href="#i-download"/></svg></button></div>
+            </section>
+          </div>
+        </section>
+      </div>
+
+      <dialog id="entry-dialog" class="entry-dialog" aria-labelledby="entry-title"><form id="entry-form" method="dialog" novalidate><div class="dialog-heading"><div><span class="panel-kicker">MAKE IT COUNT</span><h2 id="entry-title">记下这一笔</h2><p>认真记录，也认真生活。</p></div><button class="icon-button dialog-close" type="button" data-close-dialog aria-label="关闭" title="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="entry-type-tabs" role="group" aria-label="记录类型"><button class="entry-type is-active" type="button" data-kind="expense"><svg class="icon"><use href="#i-arrow-down"/></svg>支出</button><button class="entry-type" type="button" data-kind="income"><svg class="icon"><use href="#i-arrow-up"/></svg>收入</button></div><label class="field amount-field"><span>金额 <span class="required-mark">*</span></span><div class="amount-input"><span>¥</span><input name="amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="0.00" inputmode="decimal" required></div></label><label class="field"><span>分类 <span class="required-mark">*</span></span><select name="category" required></select></label><label class="field"><span>日期 <span class="required-mark">*</span></span><input name="occurredOn" type="date" required></label><label class="field"><span>备注 <span class="field-optional">选填</span></span><input name="note" type="text" maxlength="120" placeholder="这笔钱花在哪里了？"></label><p id="entry-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button class="button button-outline" type="button" data-close-dialog>再想想</button><button id="entry-submit" class="button button-primary" type="submit"><svg class="icon"><use href="#i-plus"/></svg>保存记录</button></div></form></dialog>
+      <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    </main>
+  </body>
+</html>
