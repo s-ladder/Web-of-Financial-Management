@@ -115,7 +115,7 @@ pnpm dev
 
 `pnpm dev` 运行 `node --watch server/index.js`，默认打开 `http://localhost:3000`。首次创建本地数据库时，非生产模式会建立演示账户和样例流水。也可注册自己的账户。
 
-仓库包含 `.env.example` 作为变量参考，但没有 `dotenv` 依赖或自动加载 `.env` 的代码；需要覆盖配置时，应在启动进程的 shell、IDE 或部署平台中设置环境变量。常用变量：
+仓库包含 `.env.example` 作为变量参考。服务器启动时通过 Node.js 内置的 `process.loadEnvFile()` 加载项目根目录的 `.env.local`；该文件不存在时再尝试 `.env`。已经在操作系统或托管平台设置的同名环境变量优先，不会被文件内容覆盖。Neon CLI 的环境拉取已将连接变量写入 `.env.local`；`.env.local` 和 `.env` 都不应提交到 Git，仓库 `.gitignore` 已忽略这两个文件。Render 不读取开发机上的环境文件，部署时必须在 Render 的环境变量页面单独设置 `DATABASE_URL`。常用变量：
 
 | 变量 | 用途 | 默认/说明 |
 | --- | --- | --- |
@@ -123,10 +123,17 @@ pnpm dev
 | `HOST` | 监听地址 | 开发时 `127.0.0.1`；生产默认 `0.0.0.0` |
 | `DATABASE_PATH` | SQLite 文件路径 | `./data/ledger.sqlite`；仅未设置 `DATABASE_URL` 时生效 |
 | `DATABASE_URL` | PostgreSQL 连接串 | 设置后选择 PostgreSQL；生产必须设置 |
+| `DATABASE_URL_UNPOOLED` | PostgreSQL 直连串 | Neon CLI 可同时拉取；供管理或迁移工具使用，应用运行时使用池化的 `DATABASE_URL` |
 | `NODE_ENV` | 运行环境 | 设为 `production` 会关闭演示模式并启用生产 Cookie/代理配置 |
 | `DISABLE_DEMO` | 在非生产环境关闭演示模式 | 仅字符串 `true` 生效 |
 
 生产启动命令为 `pnpm start`。测试命令是 `pnpm test`，用于验证认证、权限隔离、输入校验和 CSV 流程。
+
+## Neon CLI 与分支配置
+
+Neon CLI 将当前代码目录关联到 Neon 项目和 `production` 分支。`.neon` 是本机项目指针，已加入 `.gitignore`；`.env.local` 保存本机连接变量，也已忽略。不要把这两个文件、连接串或数据库密码提交到 Git。应用的 `pg` 连接池使用 Neon 提供的池化 `DATABASE_URL` 处理 Web 请求；`DATABASE_URL_UNPOOLED` 是直连地址，适用于迁移、备份或管理任务，不应作为日常 Web 请求连接。
+
+`neon.ts` 是 Neon CLI 使用的基础设施策略文件，不是 Express 运行代码。当前策略只保留 PostgreSQL，并对新建的非默认分支设置七天有效期；现有 `production` 分支没有额外覆盖。`neon config plan` 检查结果为无差异，因此当前不需要执行 `neon deploy`。`@neon/config` 与 `@neon/env` 放在开发依赖中，供本地 Neon 配置工具使用，不参与网站运行时请求。`.agents/skills/` 与 `skills-lock.json` 保存 Neon 及 PostgreSQL 专用的代理开发指南和版本锁定信息。
 
 ## Render 与 Neon 部署
 
@@ -134,9 +141,9 @@ pnpm dev
 
 部署步骤：
 
-1. 在 Neon 创建 PostgreSQL 项目，取得供应商提供的连接串，并按供应商要求使用包含 TLS/SSL 参数的连接配置。
+1. 在 Neon 选择 PostgreSQL 项目与分支；Web 应用使用池化连接串。Neon CLI 可把项目环境变量拉取到本机 `.env.local`。
 2. 将代码推送到 Render 可访问的 Git 仓库，在 Render 创建 Blueprint 部署。
-3. 在 Render 环境变量中填写 `DATABASE_URL`，不要提交连接串或数据库密码。应用启动时会在该连接所选数据库/schema 的默认搜索路径中创建三张表。
+3. 在 Render 环境变量中填写池化的 `DATABASE_URL`，不要提交连接串或数据库密码。Neon 本地 `.env.local` 不会自动传到 Render。应用启动时会在该连接所选数据库/schema 的默认搜索路径中创建三张表。
 4. 等待 `/api/config` 健康检查通过后，使用 Render 提供的服务地址访问并注册账户。生产模式不会提供演示账户。
 
 `render.yaml` 没有声明持久磁盘。Render Free Web Service 会在 15 分钟没有入站请求后休眠，并使用临时文件系统；因此云端应使用 Neon 等外部持久 PostgreSQL，而不要把服务目录中的 SQLite 当作可靠存储。Render 会分配一个公开的 `*.onrender.com` 子域名，可先用于课程演示；它不是注册在个人名下的域名。Render 支持绑定自有域名，但域名注册与 DNS 仍需自行处理。Neon 免费计划截至 2026-11-14 的官方说明为每项目每月 100 CU-hours、1 GB 存储；额度及快照/恢复能力可能调整，应以[Render 免费服务文档](https://render.com/docs/free)、[Render 自定义域名文档](https://render.com/docs/custom-domains)和[Neon 免费额度文档](https://neon.com/docs/introduction/provisioned-compute#free-tier)为准。不要把免费额度视作 SLA 或数据库备份方案。
@@ -163,4 +170,5 @@ Render 的 `/api/config` 健康检查只返回应用配置，不执行数据库�
 - `server/app.js`：Express 中间件、认证、API、校验、CSV 与安全响应头。
 - `server/database.js`：SQLite/PostgreSQL 适配器、表结构和演示数据。
 - `public/index.html`、`public/app.js`、`public/styles.css`：静态页面结构、客户端渲染与响应式样式。
+- `neon.ts`、`skills-lock.json`、`.agents/skills/`：Neon 分支策略与版本锁定的 PostgreSQL 开发技能。
 - `.env.example`、`render.yaml`、`README.md`：本机环境变量参考与部署说明。

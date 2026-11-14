@@ -17,7 +17,7 @@ pnpm install
 pnpm dev
 ```
 
-打开 [http://localhost:3000](http://localhost:3000)。本地首次启动会创建 `data/ledger.sqlite` 和可选演示账本。演示模式只在非生产环境开放：
+打开 [http://localhost:3000](http://localhost:3000)。本地首次启动会创建 `data/ledger.sqlite` 和可选演示账本。若连接 Neon，可使用 Neon CLI 将变量拉取到 `.env.local`；启动时会自动加载 `.env.local`（其次为 `.env`）。这些本地密钥文件不会提交到 Git，Render 也不会读取它们，生产环境须在 Render 环境变量中单独设置 `DATABASE_URL`。演示模式只在非生产环境开放：
 
 - 邮箱：`demo@fencun.local`
 - 密码：`Fencun2026!`
