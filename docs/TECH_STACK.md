@@ -44,13 +44,17 @@ Express（server/index.js、server/app.js）
 
 | 表 | 主要字段 | 用途 |
 | --- | --- | --- |
-| `users` | `id`、`name`、`email`、`password_hash`、`password_salt`、`created_at` | 账户与密码凭据。邮箱有唯一约束。 |
+| `users` | `id`、`name`、`email`、`password_hash`、`password_salt`、`profile_type`、`created_at` | 账户与密码凭据。邮箱有唯一约束；`profile_type` 为 `student`、`employee` 或 `family`。 |
 | `sessions` | `token_hash`、`user_id`、`expires_at` | 服务端会话记录；用户外键带 `ON DELETE CASCADE`。 |
-| `transactions` | `id`、`user_id`、`kind`、`amount`、`category`、`note`、`occurred_on`、`created_at` | 收支流水；类型及正金额由数据库约束。 |
+| `households` | `id`、`name`、`invite_code`、`created_by`、`created_at` | 家庭账本及其唯一邀请码。 |
+| `household_members` | `household_id`、`user_id`、`role`、`joined_at` | 家庭成员关系；角色为 `owner` 或 `member`，每个账户最多属于一个家庭组。 |
+| `transactions` | `id`、`user_id`、`household_id`、`kind`、`amount`、`category`、`note`、`occurred_on`、`created_at` | 收支流水；`user_id` 表示记录人，`household_id` 为空表示个人账本，非空表示共享家庭账本。 |
 
 金额在数据库中以整数分保存，输入金额限制为正数且不超过 1 亿元；日期以 `YYYY-MM-DD` 字符串保存。SQLite 使用 `INTEGER` 主键和金额，PostgreSQL 使用 `BIGSERIAL` 主键和 `BIGINT` 金额。
 
-所有账户共享数据库和相同表结构，**不是**每位用户独立数据库或独立 schema。隔离依靠服务端会话确定的 `user_id` 与查询条件实现：流水列表、统计、导出、更新和删除均按当前用户过滤；创建或导入记录时，所有者 ID 取自会话而不是请求参数。项目没有数据库行级安全策略（RLS），因此隔离边界在应用代码中。
+所有账户共享数据库和相同表结构，**不是**每位用户独立数据库或独立 schema。隔离依靠服务端会话确定的用户 ID、家庭成员关系与查询条件实现。个人账本查询会同时限定当前 `user_id` 与 `household_id IS NULL`；家庭模式先由服务端确认成员关系，再限定到成员所属的单一 `household_id`。流水新增或导入时，记录人 ID 来自会话，账本归属由已验证的请求范围决定，不接受客户端传入其他用户或家庭的 ID。家庭组任意成员可查看、修改、删除共享流水；创建者可更换邀请码和移除普通成员，普通成员可退出。项目没有数据库行级安全策略（RLS），因此隔离边界在应用代码中。
+
+身份类型保存于 `users.profile_type`，仅用于个性化收入/支出分类和界面提示；它不是权限角色。家庭账本模式会使用家庭分类模板。创建家庭组或通过邀请码加入不会把用户个人流水迁移到家庭账本，原有个人账目保持私有。每个账户目前最多加入一个家庭组；邀请码为随机 10 位十六进制字符串，可由创建者更换。创建者不能直接退出或删除家庭组。
 
 注册时邮箱会被转为小写，登录也使用小写邮箱；SQLite 另使用 `COLLATE NOCASE`，PostgreSQL schema 没有声明对应的 `NOCASE` 规则。通过应用注册流程时会做规范化，但直接写入数据库或从外部导入用户时不能假设两个数据库的邮箱比较规则完全等价。
 
@@ -158,8 +162,10 @@ Render 的 `/api/config` 健康检查只返回应用配置，不执行数据库�
 
 - **同一套 API 对接两种数据库：** SQLite 适合无需外部服务的本地演示；PostgreSQL 适合部署到临时文件系统之外。适配器减少业务层重复，但数据库 schema、类型和邮箱排序规则仍有差异。
 - **行级用户隔离：** 共享 schema，通过绑定当前会话用户 ID 限定流水，部署简单；不是数据库级 RLS，未来新增查询/导出接口必须持续加入所有者过滤。
+- **家庭共享账本：** `household_members` 授权访问一个家庭 `household_id`；个人流水通过 `household_id IS NULL` 与家庭流水隔离。邀请码没有自动过期时间；家庭成员均可编辑与删除共享流水，创建者可更换邀请码和移除普通成员，当前没有细粒度权限和审计日志。
+- **身份只是分类模板：** 学生、上班族、家庭身份不会限制用户账户权限；更改身份设置与成员资料管理尚未提供。
 - **SQLite API 是同步的：** `DatabaseSync` 调用虽然被包装成适配器 Promise，但底层 I/O 仍在 Node 主线程同步执行。对并发较高或持续生产负载不理想；部署选择 PostgreSQL 也避免依赖临时 SQLite 文件。
-- **没有 schema migration：** 当前启动逻辑只创建缺失表和索引，不会自动升级已有表结构。未来字段或约束变更需要提供迁移方案，并验证 SQLite 与 PostgreSQL 两种后端。
+- **轻量启动迁移：** 启动会为旧 schema 补齐 `users.profile_type` 和 `transactions.household_id`，并创建家庭相关表和索引；尚无独立的版本化迁移工具。更复杂的数据回填或约束变更应采用显式迁移脚本并验证两种数据库。
 - **PostgreSQL 占位符转换很轻量：** 适配器通过正则把每个 `?` 替换成 `$n`，不是 SQL 解析器；当前 SQL 参数位点符合该约定，但将来 SQL 字符串字面量或注释中若出现问号，转换可能出错。
 - **内存限流有部署边界：** 登录失败计数存在单进程 `Map` 中，扩展多个实例后计数不共享；应用重启会重置计数。
 - **列表不分页：** 月度流水接口最多返回 1,000 条，没有游标/偏移分页；超出上限时 UI 无法浏览该月全部记录。CSV 导出不受此列表上限影响。

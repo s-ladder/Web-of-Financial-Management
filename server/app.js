@@ -3,7 +3,7 @@ import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } fr
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDatabase, expenseCategories, incomeCategories } from './database.js';
+import { allCategories, categoriesForProfile, createDatabase, profileTypes } from './database.js';
 
 const scrypt = promisify(scryptCallback);
 const currentFile = fileURLToPath(import.meta.url);
@@ -18,7 +18,7 @@ function hashSessionToken(token) {
 }
 
 function publicUser(row) {
-  return { id: Number(row.id), name: row.name, email: row.email };
+  return { id: Number(row.id), name: row.name, email: row.email, profileType: row.profileType ?? 'student' };
 }
 
 function cookieValue(header, name) {
@@ -59,7 +59,7 @@ function safeTransaction(input) {
   const amountCents = Math.round(amount * 100);
   if (amountCents < 1) return { error: '金额至少为 0.01 元。' };
 
-  const categoryList = input.kind === 'expense' ? expenseCategories : incomeCategories;
+  const categoryList = allCategories()[input.kind];
   if (!categoryList.includes(input.category)) return { error: '请选择有效的分类。' };
   if (typeof input.occurredOn !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.occurredOn)) {
     return { error: '请选择有效日期。' };
@@ -165,13 +165,43 @@ export async function createApp({
       if (token) await db.run('DELETE FROM sessions WHERE token_hash = ?', hashSessionToken(token));
       return res.status(401).json({ error: '请先登录。' });
     }
-    const row = await db.get('SELECT id, name, email FROM users WHERE id = ?', session.userId);
+    const row = await db.get('SELECT id, name, email, profile_type AS "profileType" FROM users WHERE id = ?', session.userId);
     if (!row) {
       await db.run('DELETE FROM sessions WHERE token_hash = ?', hashSessionToken(token));
       return res.status(401).json({ error: '登录已失效，请重新登录。' });
     }
     req.user = publicUser(row);
     return next();
+  }
+
+  async function requireLedger(req, res, next) {
+    if (req.query.scope === 'household') {
+      const membership = await db.get('SELECT household_id AS "householdId" FROM household_members WHERE user_id = ?', req.user.id);
+      if (!membership) return res.status(404).json({ error: '你还没有加入家庭组。' });
+      req.ledger = { condition: 'household_id = ?', value: Number(membership.householdId), householdId: Number(membership.householdId) };
+    } else {
+      req.ledger = { condition: 'user_id = ? AND household_id IS NULL', value: req.user.id, householdId: null };
+    }
+    return next();
+  }
+
+  async function householdDetails(userId) {
+    const household = await db.get(`
+      SELECT h.id, h.name, h.invite_code AS "inviteCode", hm.role
+      FROM household_members hm JOIN households h ON h.id = hm.household_id
+      WHERE hm.user_id = ?
+    `, userId);
+    if (!household) return null;
+    const members = await db.all(`
+      SELECT u.id, u.name, u.profile_type AS "profileType", hm.role, hm.joined_at AS "joinedAt"
+      FROM household_members hm JOIN users u ON u.id = hm.user_id
+      WHERE hm.household_id = ? ORDER BY CASE hm.role WHEN 'owner' THEN 0 ELSE 1 END, hm.joined_at
+    `, household.id);
+    return {
+      ...household,
+      id: Number(household.id),
+      members: members.map((member) => ({ ...member, id: Number(member.id) })),
+    };
   }
 
   function rateLimitAuth(req, res, next) {
@@ -197,25 +227,27 @@ export async function createApp({
     const token = cookieValue(req.headers.cookie, sessionCookie);
     const session = await db.get('SELECT user_id AS "userId", expires_at AS "expiresAt" FROM sessions WHERE token_hash = ?', hashSessionToken(token));
     if (!session || session.expiresAt <= Date.now()) return res.status(401).json({ error: '请先登录。' });
-    const user = await db.get('SELECT id, name, email FROM users WHERE id = ?', session.userId);
+    const user = await db.get('SELECT id, name, email, profile_type AS "profileType" FROM users WHERE id = ?', session.userId);
     if (!user) return res.status(401).json({ error: '请先登录。' });
-    return res.json({ user: publicUser(user), demoMode });
+    return res.json({ user: publicUser(user), household: await householdDetails(Number(user.id)), demoMode });
   });
 
   app.post('/api/auth/register', rateLimitAuth, async (req, res) => {
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const profileType = typeof req.body?.profileType === 'string' && profileTypes[req.body.profileType] ? req.body.profileType : '';
     if (name.length < 2 || name.length > 32) return res.status(400).json({ error: '昵称需为 2 到 32 个字。' });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return res.status(400).json({ error: '请输入有效邮箱。' });
     if (!passwordPolicy.test(password)) return res.status(400).json({ error: '密码需为 8 到 72 位，并包含字母和数字。' });
+    if (!profileType) return res.status(400).json({ error: '请选择适合你的记账身份。' });
 
     const salt = randomBytes(16).toString('hex');
     const passwordHash = (await scrypt(password, salt, 64)).toString('hex');
     try {
-      const result = await db.run('INSERT INTO users (name, email, password_hash, password_salt) VALUES (?, ?, ?, ?)',
-        name, email, passwordHash, salt);
-      const user = { id: Number(result.lastInsertRowid), name, email };
+      const result = await db.run('INSERT INTO users (name, email, password_hash, password_salt, profile_type) VALUES (?, ?, ?, ?, ?)',
+        name, email, passwordHash, salt, profileType);
+      const user = { id: Number(result.lastInsertRowid), name, email, profileType };
       await setSession(res, user.id);
       loginAttempts.delete(req.ip || 'unknown');
       return res.status(201).json({ user });
@@ -230,7 +262,7 @@ export async function createApp({
   app.post('/api/auth/login', rateLimitAuth, async (req, res) => {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const row = await db.get('SELECT id, name, email, password_hash, password_salt FROM users WHERE email = ?', email);
+    const row = await db.get('SELECT id, name, email, profile_type AS "profileType", password_hash, password_salt FROM users WHERE email = ?', email);
     const salt = row?.password_salt ?? '0'.repeat(32);
     const storedHash = row?.password_hash ?? '0'.repeat(128);
     const attemptedHash = (await scrypt(password.slice(0, 72), salt, 64)).toString('hex');
@@ -246,7 +278,7 @@ export async function createApp({
 
   app.post('/api/auth/demo', async (req, res) => {
     if (!demoMode) return res.status(404).json({ error: '找不到演示账户。' });
-    const user = await db.get('SELECT id, name, email FROM users WHERE email = ?', 'demo@fencun.local');
+    const user = await db.get('SELECT id, name, email, profile_type AS "profileType" FROM users WHERE email = ?', 'demo@fencun.local');
     if (!user) return res.status(404).json({ error: '找不到演示账户。' });
     await setSession(res, user.id);
     return res.json({ user: publicUser(user) });
@@ -257,9 +289,87 @@ export async function createApp({
     return res.status(204).end();
   });
 
-  app.get('/api/categories', requireUser, (req, res) => res.json({ expense: expenseCategories, income: incomeCategories }));
+  app.get('/api/categories', requireUser, requireLedger, (req, res) => res.json(categoriesForProfile(req.ledger.householdId ? 'family' : req.user.profileType)));
 
-  app.get('/api/dashboard', requireUser, async (req, res) => {
+  app.get('/api/household', requireUser, async (req, res) => res.json({ household: await householdDetails(req.user.id) }));
+
+  app.post('/api/household', requireUser, async (req, res) => {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    if (name.length < 2 || name.length > 40) return res.status(400).json({ error: '家庭组名称需为 2 到 40 个字。' });
+    if (await db.get('SELECT household_id FROM household_members WHERE user_id = ?', req.user.id)) {
+      return res.status(409).json({ error: '你已经属于一个家庭组。' });
+    }
+    try {
+      await db.transaction(async (transaction) => {
+        const inviteCode = randomBytes(5).toString('hex').toUpperCase();
+        const created = await transaction.run(
+          'INSERT INTO households (name, invite_code, created_by) VALUES (?, ?, ?)', name, inviteCode, req.user.id,
+        );
+        const householdId = Number(created.lastInsertRowid);
+        await transaction.run(
+          'INSERT INTO household_members (household_id, user_id, role) VALUES (?, ?, ?)', householdId, req.user.id, 'owner',
+        );
+      });
+      return res.status(201).json({ household: await householdDetails(req.user.id) });
+    } catch {
+      return res.status(500).json({ error: '家庭组暂时无法创建，请稍后再试。' });
+    }
+  });
+
+  app.post('/api/household/join', requireUser, async (req, res) => {
+    const inviteCode = typeof req.body?.inviteCode === 'string' ? req.body.inviteCode.trim().toUpperCase() : '';
+    if (!/^[A-F0-9]{10}$/.test(inviteCode)) return res.status(400).json({ error: '请输入 10 位家庭邀请码。' });
+    const existing = await db.get('SELECT household_id FROM household_members WHERE user_id = ?', req.user.id);
+    if (existing) return res.status(409).json({ error: '你已经属于一个家庭组。' });
+    const household = await db.get('SELECT id FROM households WHERE invite_code = ?', inviteCode);
+    if (!household) return res.status(404).json({ error: '邀请码无效，请向家庭组创建者确认。' });
+    try {
+      await db.transaction(async (transaction) => {
+        await transaction.run(
+          'INSERT INTO household_members (household_id, user_id, role) VALUES (?, ?, ?)', Number(household.id), req.user.id, 'member',
+        );
+      });
+      return res.status(200).json({ household: await householdDetails(req.user.id) });
+    } catch {
+      return res.status(409).json({ error: '加入家庭组失败，请刷新页面后重试。' });
+    }
+  });
+
+  app.delete('/api/household/leave', requireUser, async (req, res) => {
+    const membership = await db.get('SELECT household_id AS "householdId", role FROM household_members WHERE user_id = ?', req.user.id);
+    if (!membership) return res.status(404).json({ error: '你当前没有加入家庭组。' });
+    if (membership.role === 'owner') return res.status(409).json({ error: '创建者不能直接退出，以免家庭账本失去管理员。' });
+    await db.run('DELETE FROM household_members WHERE household_id = ? AND user_id = ?', membership.householdId, req.user.id);
+    return res.status(204).end();
+  });
+
+  app.post('/api/household/invite-code', requireUser, async (req, res) => {
+    const membership = await db.get('SELECT household_id AS "householdId", role FROM household_members WHERE user_id = ?', req.user.id);
+    if (!membership) return res.status(404).json({ error: '你当前没有加入家庭组。' });
+    if (membership.role !== 'owner') return res.status(403).json({ error: '只有家庭组创建者可以更换邀请码。' });
+    const inviteCode = randomBytes(5).toString('hex').toUpperCase();
+    await db.run('UPDATE households SET invite_code = ? WHERE id = ?', inviteCode, membership.householdId);
+    return res.json({ household: await householdDetails(req.user.id) });
+  });
+
+  app.delete('/api/household/members/:userId', requireUser, async (req, res) => {
+    const membership = await db.get('SELECT household_id AS "householdId", role FROM household_members WHERE user_id = ?', req.user.id);
+    if (!membership) return res.status(404).json({ error: '你当前没有加入家庭组。' });
+    if (membership.role !== 'owner') return res.status(403).json({ error: '只有家庭组创建者可以移除成员。' });
+    const memberId = Number(req.params.userId);
+    if (!Number.isSafeInteger(memberId) || memberId < 1 || memberId === req.user.id) {
+      return res.status(400).json({ error: '请选择有效的家庭成员。' });
+    }
+    const removed = await db.run(
+      "DELETE FROM household_members WHERE household_id = ? AND user_id = ? AND role = 'member'",
+      membership.householdId, memberId,
+    );
+    if (!removed.changes) return res.status(404).json({ error: '找不到可移除的家庭成员。' });
+    return res.json({ household: await householdDetails(req.user.id) });
+  });
+
+  app.get('/api/dashboard', requireUser, requireLedger, async (req, res) => {
+    const { condition: ledgerCondition, value: ledgerValue } = req.ledger;
     const month = monthKey(req.query.month);
     const [year, monthNumber] = month.split('-').map(Number);
     const previousDate = new Date(Date.UTC(year, monthNumber - 2, 1));
@@ -273,50 +383,51 @@ export async function createApp({
         COALESCE(SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END), 0) AS expenses,
         COALESCE(SUM(CASE WHEN kind = 'income' THEN amount ELSE 0 END), 0) AS income,
         COUNT(*) AS count
-      FROM transactions WHERE user_id = ? AND substr(occurred_on, 1, 7) = ?
-    `, req.user.id, month);
+      FROM transactions WHERE ${ledgerCondition} AND substr(occurred_on, 1, 7) = ?
+    `, ledgerValue, month);
     const previousSummary = await db.get(`
       SELECT
         COALESCE(SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END), 0) AS expenses,
         COALESCE(SUM(CASE WHEN kind = 'income' THEN amount ELSE 0 END), 0) AS income
-      FROM transactions WHERE user_id = ? AND occurred_on >= ? AND occurred_on < ?
-    `, req.user.id, `${previousMonth}-01`, monthStart);
+      FROM transactions WHERE ${ledgerCondition} AND occurred_on >= ? AND occurred_on < ?
+    `, ledgerValue, `${previousMonth}-01`, monthStart);
     const categories = await db.all(`
       SELECT category, SUM(amount) AS amount, COUNT(*) AS count
-      FROM transactions WHERE user_id = ? AND kind = 'expense' AND substr(occurred_on, 1, 7) = ?
+      FROM transactions WHERE ${ledgerCondition} AND kind = 'expense' AND substr(occurred_on, 1, 7) = ?
       GROUP BY category ORDER BY amount DESC
-    `, req.user.id, month);
+    `, ledgerValue, month);
     const dailyRows = await db.all(`
       SELECT occurred_on AS date,
         SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END) AS expenses,
         SUM(CASE WHEN kind = 'income' THEN amount ELSE 0 END) AS income,
         COUNT(*) AS count
       FROM transactions
-      WHERE user_id = ? AND occurred_on >= ? AND occurred_on < ?
+      WHERE ${ledgerCondition} AND occurred_on >= ? AND occurred_on < ?
       GROUP BY occurred_on ORDER BY occurred_on
-    `, req.user.id, monthStart, nextMonthStart);
+    `, ledgerValue, monthStart, nextMonthStart);
     const dailyByDate = new Map(dailyRows.map((row) => [row.date, row]));
     const largestExpense = await db.get(`
       SELECT id, category, note, amount, occurred_on AS "occurredOn"
       FROM transactions
-      WHERE user_id = ? AND kind = 'expense' AND occurred_on >= ? AND occurred_on < ?
+      WHERE ${ledgerCondition} AND kind = 'expense' AND occurred_on >= ? AND occurred_on < ?
       ORDER BY amount DESC, occurred_on DESC, id DESC LIMIT 1
-    `, req.user.id, monthStart, nextMonthStart);
+    `, ledgerValue, monthStart, nextMonthStart);
     const range = monthRange(month);
     const trendRows = await db.all(`
       SELECT substr(occurred_on, 1, 7) AS month,
         SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END) AS expenses,
         SUM(CASE WHEN kind = 'income' THEN amount ELSE 0 END) AS income
       FROM transactions
-      WHERE user_id = ? AND substr(occurred_on, 1, 7) BETWEEN ? AND ?
+      WHERE ${ledgerCondition} AND substr(occurred_on, 1, 7) BETWEEN ? AND ?
       GROUP BY substr(occurred_on, 1, 7)
-    `, req.user.id, range.first, range.last);
+    `, ledgerValue, range.first, range.last);
     const trendByMonth = new Map(trendRows.map((row) => [row.month, row]));
     const recent = await db.all(`
-      SELECT id, kind, amount, category, note, occurred_on AS "occurredOn"
-      FROM transactions WHERE user_id = ? AND substr(occurred_on, 1, 7) = ?
+      SELECT id, kind, amount, category, note, occurred_on AS "occurredOn",
+        (SELECT name FROM users WHERE users.id = transactions.user_id) AS "createdBy"
+      FROM transactions WHERE ${ledgerCondition} AND substr(occurred_on, 1, 7) = ?
       ORDER BY occurred_on DESC, id DESC LIMIT 7
-    `, req.user.id, month);
+    `, ledgerValue, month);
 
     return res.json({
       month,
@@ -357,12 +468,12 @@ export async function createApp({
     });
   });
 
-  app.get('/api/transactions', requireUser, async (req, res) => {
+  app.get('/api/transactions', requireUser, requireLedger, async (req, res) => {
     const month = monthKey(req.query.month);
     const kind = ['expense', 'income'].includes(req.query.kind) ? req.query.kind : null;
     const query = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
-    const conditions = ['user_id = ?', "substr(occurred_on, 1, 7) = ?"];
-    const params = [req.user.id, month];
+    const conditions = [req.ledger.condition, "substr(occurred_on, 1, 7) = ?"];
+    const params = [req.ledger.value, month];
     if (kind) {
       conditions.push('kind = ?');
       params.push(kind);
@@ -372,25 +483,26 @@ export async function createApp({
       params.push(`%${query}%`, `%${query}%`);
     }
     const rows = await db.all(`
-      SELECT id, kind, amount, category, note, occurred_on AS "occurredOn"
+      SELECT id, kind, amount, category, note, occurred_on AS "occurredOn",
+        (SELECT name FROM users WHERE users.id = transactions.user_id) AS "createdBy"
       FROM transactions WHERE ${conditions.join(' AND ')}
       ORDER BY occurred_on DESC, id DESC LIMIT 1000
     `, ...params);
     return res.json({ month, transactions: rows.map((row) => ({ ...row, id: Number(row.id), amount: Number(row.amount) })) });
   });
 
-  app.post('/api/transactions', requireUser, async (req, res) => {
+  app.post('/api/transactions', requireUser, requireLedger, async (req, res) => {
     const validated = safeTransaction(req.body);
     if (validated.error) return res.status(400).json({ error: validated.error });
     const item = validated.value;
     const result = await db.run(`
-      INSERT INTO transactions (user_id, kind, amount, category, note, occurred_on)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, req.user.id, item.kind, item.amount, item.category, item.note, item.occurredOn);
-    return res.status(201).json({ id: Number(result.lastInsertRowid), ...item });
+      INSERT INTO transactions (user_id, household_id, kind, amount, category, note, occurred_on)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, req.user.id, req.ledger.householdId, item.kind, item.amount, item.category, item.note, item.occurredOn);
+    return res.status(201).json({ id: Number(result.lastInsertRowid), ...item, createdBy: req.user.name });
   });
 
-  app.put('/api/transactions/:id', requireUser, async (req, res) => {
+  app.put('/api/transactions/:id', requireUser, requireLedger, async (req, res) => {
     const transactionId = Number(req.params.id);
     if (!Number.isSafeInteger(transactionId) || transactionId < 1) return res.status(404).json({ error: '找不到这笔记录。' });
     const validated = safeTransaction(req.body);
@@ -398,25 +510,25 @@ export async function createApp({
     const item = validated.value;
     const result = await db.run(`
       UPDATE transactions SET kind = ?, amount = ?, category = ?, note = ?, occurred_on = ?
-      WHERE id = ? AND user_id = ?
-    `, item.kind, item.amount, item.category, item.note, item.occurredOn, transactionId, req.user.id);
+      WHERE id = ? AND ${req.ledger.condition}
+    `, item.kind, item.amount, item.category, item.note, item.occurredOn, transactionId, req.ledger.value);
     if (result.changes === 0) return res.status(404).json({ error: '找不到这笔记录。' });
     return res.json({ id: transactionId, ...item });
   });
 
-  app.delete('/api/transactions/:id', requireUser, async (req, res) => {
+  app.delete('/api/transactions/:id', requireUser, requireLedger, async (req, res) => {
     const transactionId = Number(req.params.id);
     if (!Number.isSafeInteger(transactionId) || transactionId < 1) return res.status(404).json({ error: '找不到这笔记录。' });
-    const result = await db.run('DELETE FROM transactions WHERE id = ? AND user_id = ?', transactionId, req.user.id);
+    const result = await db.run(`DELETE FROM transactions WHERE id = ? AND ${req.ledger.condition}`, transactionId, req.ledger.value);
     if (result.changes === 0) return res.status(404).json({ error: '找不到这笔记录。' });
     return res.status(204).end();
   });
 
-  app.get('/api/export.csv', requireUser, async (req, res) => {
+  app.get('/api/export.csv', requireUser, requireLedger, async (req, res) => {
     const rows = await db.all(`
       SELECT occurred_on AS "date", kind, category, amount, note
-      FROM transactions WHERE user_id = ? ORDER BY occurred_on DESC, id DESC
-    `, req.user.id);
+      FROM transactions WHERE ${req.ledger.condition} ORDER BY occurred_on DESC, id DESC
+    `, req.ledger.value);
     const escapeCell = (value) => {
       const text = String(value);
       const spreadsheetSafe = /^[\u0000-\u0020\uFEFF]*[=+\-@]/.test(text) ? `'${text}` : text;
@@ -439,7 +551,7 @@ export async function createApp({
     return res.send(`\uFEFF${lines.join('\r\n')}`);
   });
 
-  app.post('/api/import.csv', requireUser, express.text({ type: ['text/csv', 'text/plain'], limit: '2mb' }), async (req, res) => {
+  app.post('/api/import.csv', requireUser, requireLedger, express.text({ type: ['text/csv', 'text/plain'], limit: '2mb' }), async (req, res) => {
     if (typeof req.body !== 'string' || req.body.trim() === '') return res.status(400).json({ error: '请选择非空 CSV 文件。' });
     let rows;
     try {
@@ -482,9 +594,9 @@ export async function createApp({
       await db.transaction(async (transaction) => {
         for (const item of validatedRows) {
           await transaction.run(`
-            INSERT INTO transactions (user_id, kind, amount, category, note, occurred_on)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `, req.user.id, item.kind, item.amount, item.category, item.note, item.occurredOn);
+            INSERT INTO transactions (user_id, household_id, kind, amount, category, note, occurred_on)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `, req.user.id, req.ledger.householdId, item.kind, item.amount, item.category, item.note, item.occurredOn);
         }
       });
       return res.status(201).json({ imported: validatedRows.length });

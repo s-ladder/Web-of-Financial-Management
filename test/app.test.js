@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { createApp } from '../server/app.js';
 
@@ -50,10 +51,10 @@ function localDate() {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-async function register(server, name, email) {
+async function register(server, name, email, profileType = 'student') {
   const result = await server.request('/api/auth/register', {
     method: 'POST',
-    body: { name, email, password: 'Fencun2026!' },
+    body: { name, email, password: 'Fencun2026!', profileType },
   });
   assert.equal(result.response.status, 201);
   return server.cookie();
@@ -189,7 +190,7 @@ test('amounts, dates, duplicate emails, and failed login are validated', async (
   await register(server, '小林', 'same@example.com');
   assert.equal((await server.request('/api/auth/register', {
     method: 'POST',
-    body: { name: '小周', email: 'SAME@example.com', password: 'Fencun2026!' },
+    body: { name: '小周', email: 'SAME@example.com', password: 'Fencun2026!', profileType: 'student' },
   })).response.status, 409);
   assert.equal((await server.request('/api/auth/login', {
     method: 'POST',
@@ -240,4 +241,141 @@ test('HTML and frontend assets are revalidated instead of kept stale', async (t)
   const image = await server.request('/images/welcome-landscape.jpg');
   assert.equal(image.response.status, 200);
   assert.match(image.response.headers.get('cache-control'), /max-age=3600/);
+});
+
+test('identity profiles provide relevant categories and persist in sessions', async (t) => {
+  const server = await launch(t);
+  const student = await register(server, '小林', 'student@example.com');
+  const studentSession = await server.request('/api/session', { cookie: student });
+  assert.equal(studentSession.payload.user.profileType, 'student');
+  const studentCategories = await server.request('/api/categories', { cookie: student });
+  assert.ok(studentCategories.payload.income.includes('生活费'));
+  assert.ok(studentCategories.payload.expense.includes('学习'));
+
+  const employee = await register(server, '小周', 'employee@example.com', 'employee');
+  const employeeCategories = await server.request('/api/categories', { cookie: employee });
+  assert.ok(employeeCategories.payload.income.includes('工资'));
+  assert.ok(employeeCategories.payload.expense.includes('居家'));
+  assert.ok(!employeeCategories.payload.income.includes('生活费'));
+
+  const invalidProfile = await server.request('/api/auth/register', {
+    method: 'POST',
+    body: { name: '小郑', email: 'invalid-profile@example.com', password: 'Fencun2026!', profileType: 'admin' },
+  });
+  assert.equal(invalidProfile.response.status, 400);
+});
+
+test('household membership shares summaries without mixing personal ledgers', async (t) => {
+  const server = await launch(t);
+  const owner = await register(server, '小林', 'household-owner@example.com', 'family');
+  const outsider = await register(server, '小郑', 'household-outsider@example.com');
+  const stranger = await register(server, '小吴', 'household-stranger@example.com');
+
+  const created = await server.request('/api/household', {
+    method: 'POST', cookie: owner, body: { name: '林家账本' },
+  });
+  assert.equal(created.response.status, 201);
+  assert.match(created.payload.household.inviteCode, /^[A-F0-9]{10}$/);
+  assert.equal(created.payload.household.members.length, 1);
+
+  const joined = await server.request('/api/household/join', {
+    method: 'POST', cookie: outsider, body: { inviteCode: created.payload.household.inviteCode.toLowerCase() },
+  });
+  assert.equal(joined.response.status, 200);
+  assert.equal(joined.payload.household.members.length, 2);
+  assert.equal(joined.payload.household.members[0].role, 'owner');
+
+  const currentDate = localDate();
+  await server.request('/api/transactions', {
+    method: 'POST', cookie: owner,
+    body: { kind: 'expense', amount: 300, category: '餐饮', note: '仅个人午餐', occurredOn: currentDate },
+  });
+  await server.request(`/api/transactions?scope=household`, {
+    method: 'POST', cookie: owner,
+    body: { kind: 'expense', amount: 1200, category: '居家', note: '家庭采购', occurredOn: currentDate },
+  });
+  await server.request('/api/transactions?scope=household', {
+    method: 'POST', cookie: outsider,
+    body: { kind: 'income', amount: 8000, category: '工资', note: '家庭收入', occurredOn: currentDate },
+  });
+
+  const familyDashboard = await server.request(`/api/dashboard?scope=household&month=${currentDate.slice(0, 7)}`, { cookie: outsider });
+  assert.equal(familyDashboard.payload.summary.expenses, 120_000);
+  assert.equal(familyDashboard.payload.summary.income, 800_000);
+  assert.equal(familyDashboard.payload.summary.count, 2);
+  const personalDashboard = await server.request(`/api/dashboard?month=${currentDate.slice(0, 7)}`, { cookie: owner });
+  assert.equal(personalDashboard.payload.summary.expenses, 30_000);
+  assert.equal(personalDashboard.payload.summary.income, 0);
+
+  const sharedRecords = await server.request(`/api/transactions?scope=household&month=${currentDate.slice(0, 7)}`, { cookie: outsider });
+  assert.equal(sharedRecords.payload.transactions.length, 2);
+  assert.ok(sharedRecords.payload.transactions.some((item) => item.createdBy === '小林'));
+  assert.ok(sharedRecords.payload.transactions.some((item) => item.createdBy === '小郑'));
+
+  const denied = await server.request(`/api/dashboard?scope=household&month=${currentDate.slice(0, 7)}`, { cookie: stranger });
+  assert.equal(denied.response.status, 404);
+  assert.equal((await server.request('/api/household/leave', { method: 'DELETE', cookie: outsider })).response.status, 204);
+  assert.equal((await server.request('/api/transactions?scope=household', { cookie: outsider })).response.status, 404);
+
+  const rotated = await server.request('/api/household/invite-code', { method: 'POST', cookie: owner });
+  assert.notEqual(rotated.payload.household.inviteCode, created.payload.household.inviteCode);
+  assert.equal((await server.request('/api/household/join', {
+    method: 'POST', cookie: stranger, body: { inviteCode: created.payload.household.inviteCode },
+  })).response.status, 404);
+  const strangerJoined = await server.request('/api/household/join', {
+    method: 'POST', cookie: stranger, body: { inviteCode: rotated.payload.household.inviteCode },
+  });
+  assert.equal(strangerJoined.response.status, 200);
+  const strangerId = strangerJoined.payload.household.members.find((member) => member.name === '小吴').id;
+  assert.equal((await server.request(`/api/household/members/${strangerId}`, { method: 'DELETE', cookie: owner })).response.status, 200);
+  assert.equal((await server.request('/api/transactions?scope=household', { cookie: stranger })).response.status, 404);
+});
+
+test('existing SQLite ledgers gain profile and household fields without losing records', async (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'fencun-migration-'));
+  const databasePath = path.join(directory, 'ledger.sqlite');
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec(`
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      password_hash TEXT NOT NULL,
+      password_salt TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE TABLE transactions (
+      id INTEGER PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('expense', 'income')),
+      amount INTEGER NOT NULL CHECK (amount > 0),
+      category TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      occurred_on TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO users (id, name, email, password_hash, password_salt)
+      VALUES (1, '旧账户', 'legacy@example.com', 'hash', 'salt');
+    INSERT INTO transactions (id, user_id, kind, amount, category, note, occurred_on)
+      VALUES (1, 1, 'expense', 1250, '餐饮', '保留的旧记录', '2026-11-14');
+  `);
+  legacy.close();
+  const app = await createApp({ databasePath, demoMode: false });
+  t.after(async () => {
+    app.locals.database.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  const user = await app.locals.database.get('SELECT profile_type AS "profileType" FROM users WHERE id = ?', 1);
+  const transaction = await app.locals.database.get(
+    'SELECT household_id AS "householdId", note FROM transactions WHERE id = ?', 1,
+  );
+  assert.equal(user.profileType, 'student');
+  assert.equal(transaction.householdId, null);
+  assert.equal(transaction.note, '保留的旧记录');
 });

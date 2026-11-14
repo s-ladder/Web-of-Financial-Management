@@ -4,8 +4,38 @@ import { randomBytes, scryptSync } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import pg from 'pg';
 
-export const expenseCategories = ['餐饮', '交通', '日用', '居家', '购物', '娱乐', '医疗', '学习', '其他'];
-export const incomeCategories = ['工资', '兼职', '奖金', '退款', '其他'];
+export const profileTypes = {
+  student: {
+    label: '学生',
+    description: '生活费、奖学金、兼职与校园日常',
+    expense: ['餐饮', '交通', '学习', '日用', '娱乐', '医疗', '其他'],
+    income: ['生活费', '奖学金', '兼职', '退款', '其他'],
+  },
+  employee: {
+    label: '上班族',
+    description: '工资、奖金、通勤与日常账单',
+    expense: ['餐饮', '交通', '居家', '日用', '购物', '娱乐', '医疗', '其他'],
+    income: ['工资', '奖金', '兼职', '退款', '其他'],
+  },
+  family: {
+    label: '家庭',
+    description: '家庭收入、住房、教育与共同开支',
+    expense: ['餐饮', '交通', '居家', '教育', '日用', '购物', '医疗', '娱乐', '其他'],
+    income: ['工资', '经营收入', '奖金', '退款', '其他'],
+  },
+};
+
+export const expenseCategories = [...new Set(Object.values(profileTypes).flatMap((profile) => profile.expense))];
+export const incomeCategories = [...new Set(Object.values(profileTypes).flatMap((profile) => profile.income))];
+
+export function categoriesForProfile(profileType = 'student') {
+  const profile = profileTypes[profileType] ?? profileTypes.student;
+  return { expense: profile.expense, income: profile.income };
+}
+
+export function allCategories() {
+  return { expense: expenseCategories, income: incomeCategories };
+}
 
 const demoEmail = 'demo@fencun.local';
 const demoPassword = 'Fencun2026!';
@@ -53,7 +83,7 @@ function createPostgresAdapter(query, close, connect) {
     get: async (statement, ...params) => (await query(numbered(statement), params)).rows[0],
     all: async (statement, ...params) => (await query(numbered(statement), params)).rows,
     run: async (statement, ...params) => {
-      const returnsId = /^\s*INSERT\s+INTO\s+(?:users|transactions)\b/i.test(statement) && !/\bRETURNING\b/i.test(statement);
+      const returnsId = /^\s*INSERT\s+INTO\s+(?:users|transactions|households)\b/i.test(statement) && !/\bRETURNING\b/i.test(statement);
       const sql = numbered(returnsId ? `${statement} RETURNING id` : statement);
       const result = await query(sql, params);
       return {
@@ -89,17 +119,36 @@ const postgresSchema = `
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     password_salt TEXT NOT NULL,
+    profile_type TEXT NOT NULL DEFAULT 'student' CHECK (profile_type IN ('student', 'employee', 'family')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_type TEXT NOT NULL DEFAULT 'student' CHECK (profile_type IN ('student', 'employee', 'family'));
   CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at BIGINT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS sessions_expires ON sessions(expires_at);
+  CREATE TABLE IF NOT EXISTS households (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    invite_code TEXT NOT NULL UNIQUE,
+    created_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS household_members (
+    household_id BIGINT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('owner', 'member')),
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (household_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS household_members_user ON household_members(user_id, household_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS household_members_one_per_user ON household_members(user_id);
   CREATE TABLE IF NOT EXISTS transactions (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    household_id BIGINT REFERENCES households(id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK (kind IN ('expense', 'income')),
     amount BIGINT NOT NULL CHECK (amount > 0),
     category TEXT NOT NULL,
@@ -107,8 +156,10 @@ const postgresSchema = `
     occurred_on TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  ALTER TABLE transactions ADD COLUMN IF NOT EXISTS household_id BIGINT REFERENCES households(id) ON DELETE CASCADE;
   CREATE INDEX IF NOT EXISTS transactions_user_date ON transactions(user_id, occurred_on DESC, id DESC);
   CREATE INDEX IF NOT EXISTS transactions_user_category ON transactions(user_id, category);
+  CREATE INDEX IF NOT EXISTS transactions_household_date ON transactions(household_id, occurred_on DESC, id DESC);
 `;
 
 export async function createDatabase(databasePath, { seedDemo = false, databaseUrl = process.env.DATABASE_URL } = {}) {
@@ -143,6 +194,7 @@ export async function createDatabase(databasePath, { seedDemo = false, databaseU
       email TEXT NOT NULL UNIQUE COLLATE NOCASE,
       password_hash TEXT NOT NULL,
       password_salt TEXT NOT NULL,
+      profile_type TEXT NOT NULL DEFAULT 'student',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS sessions (
@@ -151,9 +203,26 @@ export async function createDatabase(databasePath, { seedDemo = false, databaseU
       expires_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS sessions_expires ON sessions(expires_at);
+    CREATE TABLE IF NOT EXISTS households (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      invite_code TEXT NOT NULL UNIQUE,
+      created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS household_members (
+      household_id INTEGER NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK (role IN ('owner', 'member')),
+      joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (household_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS household_members_user ON household_members(user_id, household_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS household_members_one_per_user ON household_members(user_id);
     CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      household_id INTEGER REFERENCES households(id) ON DELETE CASCADE,
       kind TEXT NOT NULL CHECK (kind IN ('expense', 'income')),
       amount INTEGER NOT NULL CHECK (amount > 0),
       category TEXT NOT NULL,
@@ -164,6 +233,16 @@ export async function createDatabase(databasePath, { seedDemo = false, databaseU
     CREATE INDEX IF NOT EXISTS transactions_user_date ON transactions(user_id, occurred_on DESC, id DESC);
     CREATE INDEX IF NOT EXISTS transactions_user_category ON transactions(user_id, category);
   `);
+
+  const userColumns = connection.prepare('PRAGMA table_info(users)').all();
+  if (!userColumns.some((column) => column.name === 'profile_type')) {
+    db.exec("ALTER TABLE users ADD COLUMN profile_type TEXT NOT NULL DEFAULT 'student'");
+  }
+  const transactionColumns = connection.prepare('PRAGMA table_info(transactions)').all();
+  if (!transactionColumns.some((column) => column.name === 'household_id')) {
+    db.exec('ALTER TABLE transactions ADD COLUMN household_id INTEGER REFERENCES households(id) ON DELETE CASCADE');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS transactions_household_date ON transactions(household_id, occurred_on DESC, id DESC)');
 
   if (seedDemo) await seedDemoAccount(db);
   return db;

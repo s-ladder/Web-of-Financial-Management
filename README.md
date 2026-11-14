@@ -33,6 +33,9 @@ pnpm dev
 - 新增、编辑、删除收入和支出记录
 - CSV 导入、UTF-8 CSV 导出和可下载的导入模板
 - 多用户注册、登录、退出与服务器端会话
+- 注册时选择学生、上班族或家庭记账身份，按身份展示相应的收入与支出分类
+- 家庭组创建与邀请码加入；家庭成员可共同记录、导入导出并查看家庭汇总
+- 个人账本与家庭账本分开统计；家庭明细显示记录人，成员可退出家庭组
 - SQLite 本地持久化、PostgreSQL 云端持久化
 - 基础安全响应头、输入验证、登录失败限速和 1,000 行 CSV 导入上限
 
@@ -55,12 +58,14 @@ Render 自动分配的 `onrender.com` 子域名可用于课堂演示；它不是
 
 - `POST /api/auth/register`、`POST /api/auth/login`、`POST /api/auth/logout`
 - `GET /api/session`、`GET /api/config`、`GET /api/categories`
-- `GET /api/dashboard?month=YYYY-MM`
-- `GET /api/transactions?month=YYYY-MM&kind=expense&q=餐饮`
+- `POST /api/household`、`POST /api/household/join`、`GET /api/household`、`DELETE /api/household/leave`
+- `POST /api/household/invite-code`（创建者更换邀请码）、`DELETE /api/household/members/:userId`（创建者移除成员）
+- `GET /api/dashboard?month=YYYY-MM&scope=personal|household`
+- `GET /api/transactions?month=YYYY-MM&kind=expense&q=餐饮&scope=personal|household`
 - `POST /api/transactions`、`PUT /api/transactions/:id`、`DELETE /api/transactions/:id`
 - `GET /api/export.csv`、`POST /api/import.csv`
 
-账目新增、修改、删除和导入接口都从已登录会话读取用户 ID，不接受客户端指定的所有者 ID。
+账目新增、修改、删除和导入接口都从已登录会话读取用户 ID，不接受客户端指定的所有者 ID。个人账本只查询 `household_id IS NULL` 的个人流水；家庭账本只查询当前账户所属家庭组的流水。家庭成员均可管理共享流水，明细会显示记录人。每个账户当前最多加入一个家庭组；创建者不能直接退出，但可以更换邀请码和移除成员，其他成员可以退出。邀请码没有过期时间，只能由创建者主动更换，请仅分享给可信任的家人。
 
 导出 CSV 时，备注如果以 `=`, `+`, `-`, `@` 或控制字符开头，会加上文本前缀，避免电子表格把备注当成公式执行。
 

@@ -4,7 +4,12 @@ const currency = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maxi
 const dayFormat = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', weekday: 'short' });
 const options = { expense: ['餐饮', '交通', '日用', '居家', '购物', '娱乐', '医疗', '学习', '其他'], income: ['工资', '兼职', '奖金', '退款', '其他'] };
 const categoryIcons = { 餐饮: 'coffee', 交通: 'train', 日用: 'bag', 居家: 'home', 购物: 'bag', 娱乐: 'film', 医疗: 'pill', 学习: 'book', 工资: 'wallet', 兼职: 'user', 奖金: 'gift', 退款: 'arrow-left', 其他: 'receipt' };
-const state = { user: null, demo: false, month: currentMonth(), filter: 'all', search: '', records: [], dashboard: null, editing: null, kind: 'expense', recordRequest: 0, overviewRequest: 0 };
+const state = { user: null, profileType: 'student', household: null, ledgerScope: 'personal', categories: options, demo: false, month: currentMonth(), filter: 'all', search: '', records: [], dashboard: null, editing: null, kind: 'expense', recordRequest: 0, overviewRequest: 0 };
+const profileLabels = { student: '学生账本', employee: '上班族账本', family: '家庭账本' };
+
+function scoped(path) {
+  return `${path}${path.includes('?') ? '&' : '?'}scope=${encodeURIComponent(state.ledgerScope)}`;
+}
 
 function currentMonth() {
   const date = new Date();
@@ -55,6 +60,7 @@ function setAuthMode(registering) {
   const form = query('#auth-form');
   form.dataset.mode = registering ? 'register' : 'login';
   query('#name-field').hidden = !registering;
+  query('#profile-field').hidden = !registering;
   query('#auth-title').textContent = registering ? '创建你的账本' : '欢迎回来';
   query('#auth-subtitle').textContent = registering ? '给自己的生活，留一本清楚的账' : '登录你的个人账本';
   query('#auth-submit').replaceChildren(registering ? '创建账户' : '登录', icon('chevron'));
@@ -77,8 +83,18 @@ function showAuth() {
   setAuthMode(false);
 }
 
-function enterWorkspace(user) {
+async function enterWorkspace(user, household = undefined) {
   state.user = user;
+  state.profileType = user.profileType ?? 'student';
+  state.ledgerScope = 'personal';
+  if (household === undefined) {
+    try {
+      household = (await api('/api/household')).household;
+    } catch {
+      household = null;
+    }
+  }
+  state.household = household;
   clearWorkspaceData();
   query('#auth-screen').hidden = true;
   query('#workspace').hidden = false;
@@ -91,10 +107,27 @@ function enterWorkspace(user) {
   query('#welcome-title').firstChild.textContent = `${greeting}，${user.name} `;
   query('#account-name').textContent = user.name;
   query('#account-email').textContent = user.email;
+  query('#account-profile').textContent = profileLabels[state.profileType] ?? profileLabels.student;
   query('#account-avatar').textContent = [...user.name][0];
+  query('#welcome-caption').textContent = state.profileType === 'student'
+    ? '记录生活费、奖学金与校园日常，慢慢找到自己的节奏。'
+    : state.profileType === 'employee'
+      ? '把工资、通勤和日常账单安排得清清楚楚。'
+      : '看见每位家人的付出，也看见家庭收支全貌。';
+  query('#household-ledger-tab').hidden = !state.household;
+  all('.ledger-tab').forEach((button) => {
+    const selected = button.dataset.scope === state.ledgerScope;
+    button.classList.toggle('is-active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
   query('#welcome-date').textContent = `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日 · 把今天过好`;
   query('#today-label').textContent = date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
-  return refreshOverview();
+  try {
+    state.categories = await api(scoped('/api/categories'));
+  } catch {
+    state.categories = options;
+  }
+  await refreshOverview();
 }
 
 function clearWorkspaceData() {
@@ -137,7 +170,7 @@ async function refreshOverview() {
   const requestId = ++state.overviewRequest;
   try {
     const [dashboard] = await Promise.all([
-      api(`/api/dashboard?month=${encodeURIComponent(state.month)}`),
+      api(scoped(`/api/dashboard?month=${encodeURIComponent(state.month)}`)),
       loadRecords(),
     ]);
     if (requestId !== state.overviewRequest) return;
@@ -548,6 +581,7 @@ function renderRecent(items) {
 async function loadRecords() {
   const requestId = ++state.recordRequest;
   const params = new URLSearchParams({ month: state.month });
+  params.set('scope', state.ledgerScope);
   if (state.filter !== 'all') params.set('kind', state.filter);
   if (state.search) params.set('q', state.search);
   const result = await api(`/api/transactions?${params}`);
@@ -571,6 +605,11 @@ async function loadRecords() {
     categoryCell.append(label);
     const note = document.createElement('td');
     note.textContent = item.note || '—';
+    if (state.ledgerScope === 'household' && item.createdBy) {
+      const attribution = document.createElement('small');
+      attribution.textContent = `记录人：${item.createdBy}`;
+      note.append(document.createElement('br'), attribution);
+    }
     note.title = item.note || '';
     const date = document.createElement('td');
     date.textContent = item.occurredOn;
@@ -594,7 +633,9 @@ async function loadRecords() {
 function fillEntryCategories(kind, selected = '') {
   const select = query('[name="category"]');
   select.replaceChildren();
-  options[kind].forEach((value) => {
+  const categories = [...(state.categories[kind] ?? options[kind])];
+  if (selected && !categories.includes(selected)) categories.push(selected);
+  categories.forEach((value) => {
     const option = document.createElement('option');
     option.value = value;
     option.textContent = value;
@@ -603,21 +644,21 @@ function fillEntryCategories(kind, selected = '') {
   if (options[kind].includes(selected)) select.value = selected;
 }
 
-function setEntryKind(kind) {
+function setEntryKind(kind, selected = '') {
   state.kind = kind;
   all('.entry-type').forEach((button) => button.classList.toggle('is-active', button.dataset.kind === kind));
-  fillEntryCategories(kind);
+  fillEntryCategories(kind, selected);
 }
 
 function openEntry(item = null) {
   state.editing = item?.id ?? null;
   const form = query('#entry-form');
   form.reset();
-  setEntryKind(item?.kind ?? 'expense');
+  setEntryKind(item?.kind ?? 'expense', item?.category ?? '');
   query('#entry-title').textContent = item ? '修改这笔记录' : '记下这一笔';
   query('#entry-submit').lastChild.textContent = item ? '保存修改' : '保存记录';
   query('[name="amount"]').value = item ? (item.amount / 100).toFixed(2) : '';
-  query('[name="category"]').value = item?.category ?? options[state.kind][0];
+  query('[name="category"]').value = item?.category ?? state.categories[state.kind][0];
   query('[name="occurredOn"]').value = item?.occurredOn ?? today();
   query('[name="note"]').value = item?.note ?? '';
   errorMessage(query('#entry-error'));
@@ -637,7 +678,7 @@ async function saveEntry(event) {
   payload.amount = Number(payload.amount);
   const editing = state.editing;
   try {
-    await api(editing ? `/api/transactions/${editing}` : '/api/transactions', {
+    await api(scoped(editing ? `/api/transactions/${editing}` : '/api/transactions'), {
       method: editing ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -654,7 +695,7 @@ async function saveEntry(event) {
 
 async function exportCsv() {
   try {
-    const response = await fetch('/api/export.csv', { credentials: 'same-origin' });
+    const response = await fetch(scoped('/api/export.csv'), { credentials: 'same-origin' });
     if (!response.ok) {
       const result = await response.json();
       throw new Error(result.error || '导出失败。');
@@ -674,7 +715,7 @@ async function exportCsv() {
 async function importCsv(file) {
   try {
     if (file.size > 2 * 1024 * 1024) throw new Error('CSV 文件不能超过 2 MB。');
-    const result = await api('/api/import.csv', {
+    const result = await api(scoped('/api/import.csv'), {
       method: 'POST',
       headers: { 'Content-Type': 'text/csv; charset=utf-8' },
       body: await file.text(),
@@ -712,6 +753,7 @@ async function switchView(view) {
     overview: { element: query('#overview-view'), label: '总览' },
     analysis: { element: query('#analysis-view'), label: '数据分析' },
     transactions: { element: query('#transactions-view'), label: '收支明细' },
+    household: { element: query('#household-view'), label: '家庭组' },
   };
   if (!views[view]) return;
   Object.entries(views).forEach(([key, item]) => { item.element.hidden = key !== view; });
@@ -719,6 +761,13 @@ async function switchView(view) {
   all('.nav-link').forEach((button) => button.classList.toggle('is-active', button.dataset.view === view));
   if (view === 'transactions') await refreshRecords();
   if (view === 'analysis' && !state.dashboard) await refreshOverview();
+  if (view === 'household') {
+    try {
+      await refreshHousehold();
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  }
 }
 
 function setMonth(value) {
@@ -728,6 +777,95 @@ function setMonth(value) {
   query('#analysis-month').value = value;
   query('#records-month').value = value;
   refreshOverview();
+}
+
+async function switchLedgerScope(scope) {
+  if (scope === 'household' && !state.household) return toast('请先创建或加入家庭组。', 'error');
+  if (!['personal', 'household'].includes(scope) || state.ledgerScope === scope) return;
+  state.ledgerScope = scope;
+  all('.ledger-tab').forEach((button) => {
+    const selected = button.dataset.scope === scope;
+    button.classList.toggle('is-active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+  try {
+    state.categories = await api(scoped('/api/categories'));
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+  await refreshOverview();
+}
+
+async function refreshHousehold() {
+  const result = await api('/api/household');
+  state.household = result.household;
+  const household = state.household;
+  query('#household-empty').hidden = Boolean(household);
+  query('#household-detail').hidden = !household;
+  query('#household-ledger-tab').hidden = !household;
+  if (!household) {
+    if (state.ledgerScope === 'household') await switchLedgerScope('personal');
+    return;
+  }
+  query('#household-name').textContent = household.name;
+  query('#household-member-count').textContent = `${household.members.length} 位成员`;
+  query('#household-invite-code').textContent = household.inviteCode;
+  query('#household-leave').hidden = household.role !== 'member';
+  query('#household-refresh-invite').hidden = household.role !== 'owner';
+  const members = query('#household-members');
+  members.replaceChildren();
+  for (const member of household.members) {
+    const item = document.createElement('li');
+    const avatar = document.createElement('span');
+    avatar.className = 'avatar';
+    avatar.textContent = [...member.name][0];
+    const details = document.createElement('span');
+    details.className = 'household-member-info';
+    const name = document.createElement('strong');
+    name.textContent = member.name;
+    const profile = document.createElement('small');
+    profile.textContent = profileLabels[member.profileType] ?? profileLabels.student;
+    details.append(name, profile);
+    const role = document.createElement('span');
+    role.className = `member-role${member.role === 'owner' ? ' is-owner' : ''}`;
+    role.textContent = member.role === 'owner' ? '创建者' : '成员';
+    item.append(avatar, details, role);
+    if (household.role === 'owner' && member.role === 'member') {
+      const remove = document.createElement('button');
+      remove.className = 'icon-button member-remove';
+      remove.type = 'button';
+      remove.dataset.userId = member.id;
+      remove.title = `移除${member.name}`;
+      remove.setAttribute('aria-label', `移除家庭成员 ${member.name}`);
+      remove.append(icon('trash'));
+      item.append(remove);
+    }
+    members.append(item);
+  }
+}
+
+async function submitHouseholdForm(event, endpoint) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!form.reportValidity()) return;
+  const submit = query('button[type="submit"]', form);
+  submit.disabled = true;
+  try {
+    const body = Object.fromEntries(new FormData(form));
+    if (body.inviteCode) body.inviteCode = body.inviteCode.toUpperCase();
+    await api(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    form.reset();
+    await refreshHousehold();
+    toast(endpoint.endsWith('/join') ? '已加入家庭组。' : '家庭组已创建。');
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    submit.disabled = false;
+  }
 }
 
 function bindEvents() {
@@ -776,6 +914,57 @@ function bindEvents() {
     }
   });
 
+  all('.ledger-tab').forEach((button) => button.addEventListener('click', () => switchLedgerScope(button.dataset.scope)));
+  query('#household-create-form').addEventListener('submit', (event) => submitHouseholdForm(event, '/api/household'));
+  query('#household-join-form').addEventListener('submit', (event) => submitHouseholdForm(event, '/api/household/join'));
+  query('#household-join-form [name="inviteCode"]').addEventListener('input', (event) => {
+    event.currentTarget.value = event.currentTarget.value.toUpperCase().replace(/[^A-F0-9]/g, '').slice(0, 10);
+  });
+  query('#household-copy-invite').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(state.household.inviteCode);
+      toast('邀请码已复制。');
+    } catch {
+      toast('复制失败，请手动选中邀请码。', 'error');
+    }
+  });
+  query('#household-refresh-invite').addEventListener('click', async () => {
+    if (!window.confirm('更换后，当前邀请码会立即失效。确定继续吗？')) return;
+    try {
+      const result = await api('/api/household/invite-code', { method: 'POST' });
+      state.household = result.household;
+      await refreshHousehold();
+      toast('邀请码已更换。');
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  });
+  query('#household-members').addEventListener('click', async (event) => {
+    const button = event.target.closest('.member-remove');
+    if (!button) return;
+    const member = state.household.members.find((item) => String(item.id) === button.dataset.userId);
+    if (!member || !window.confirm(`确定将 ${member.name} 移出家庭组吗？其记录仍保留在家庭账本中。`)) return;
+    try {
+      const result = await api(`/api/household/members/${encodeURIComponent(member.id)}`, { method: 'DELETE' });
+      state.household = result.household;
+      await refreshHousehold();
+      toast(`${member.name} 已移出家庭组。`);
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  });
+  query('#household-leave').addEventListener('click', async () => {
+    if (!window.confirm(`确定退出“${state.household.name}”吗？家庭账本记录会保留给其他成员。`)) return;
+    try {
+      await api('/api/household/leave', { method: 'DELETE' });
+      if (state.ledgerScope === 'household') await switchLedgerScope('personal');
+      await refreshHousehold();
+      toast('已退出家庭组。');
+    } catch (error) {
+      toast(error.message, 'error');
+    }
+  });
+
   query('#quick-add').addEventListener('click', () => openEntry());
   query('[data-empty-add]').addEventListener('click', () => openEntry());
   all('[data-close-dialog]').forEach((button) => button.addEventListener('click', () => query('#entry-dialog').close()));
@@ -809,7 +998,7 @@ function bindEvents() {
     if (button.dataset.action === 'edit') return openEntry(item);
     if (!window.confirm(`确定删除 ${item.category} · ${money(item.amount)} 这笔记录吗？此操作无法撤销。`)) return;
     try {
-      await api(`/api/transactions/${item.id}`, { method: 'DELETE' });
+      await api(scoped(`/api/transactions/${item.id}`), { method: 'DELETE' });
       toast('记录已删除。');
       await refreshOverview();
     } catch (error) {
@@ -839,7 +1028,7 @@ async function start() {
     state.demo = Boolean(config.demoMode);
     try {
       const session = await api('/api/session');
-      await enterWorkspace(session.user);
+      await enterWorkspace(session.user, session.household);
     } catch {
       showAuth();
     }
