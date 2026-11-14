@@ -41,6 +41,7 @@
       <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5.5"/><circle cx="12" cy="12" r="2"/></symbol>
       <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="m12 3 1.9 5.7L20 11l-6.1 2.3L12 19l-2.1-5.7L4 11l5.9-2.3L12 3Z"/><path d="m19 14 1.2 2.4L22.5 17 20.2 18l-1.2 2.5-1-2.5-2.5-1 2.5-.6L19 14Z"/></symbol>
       <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 19.5h16"/><rect x="5" y="11" width="3.5" height="7" rx="1"/><rect x="10.25" y="6.5" width="3.5" height="11.5" rx="1"/><rect x="15.5" y="9" width="3.5" height="9" rx="1"/></symbol>
     </svg>
 
     <main id="app" class="app-shell">
@@ -51,6 +52,7 @@
             <span class="eyebrow">YOUR DAYS, IN BALANCE</span>
             <h1>认真生活，<br>也认真记录。</h1>
             <p>不是每一笔都要被计算，<br>只是让每一天过得更有数。</p>
+            <figure class="auth-story-media"><img src="/images/welcome-landscape.jpg" alt="雨后云雾环绕青山与草地" fetchpriority="high"><figcaption>把日子过好，也留意窗外的风景 <span>PHOTO · UNSPLASH</span></figcaption></figure>
             <span class="auth-story-annotation"><svg class="icon"><use href="#i-sparkle"/></svg> 一点点记下，慢慢看见生活的轮廓</span>
           </div>
           <form id="auth-form" class="auth-form">
@@ -74,8 +76,9 @@
           <a class="brand" href="#overview" aria-label="分寸首页"><span class="brand-mark" aria-hidden="true">寸</span><span class="brand-name">分寸<span class="brand-sub">PERSONAL LEDGER</span></span></a>
           <span class="nav-section-label">工作台</span>
           <nav class="main-nav" aria-label="主导航">
-            <button class="nav-link is-active" data-view="overview"><svg class="icon"><use href="#i-grid"/></svg><span>总览</span></button>
-            <button class="nav-link" data-view="transactions"><svg class="icon"><use href="#i-receipt"/></svg><span>收支明细</span><span id="nav-count" class="nav-count">0</span></button>
+            <button class="nav-link is-active" data-view="overview" type="button" title="总览" aria-label="总览"><svg class="icon"><use href="#i-grid"/></svg><span>总览</span></button>
+            <button class="nav-link" data-view="analysis" type="button" title="数据分析" aria-label="数据分析"><svg class="icon"><use href="#i-chart"/></svg><span>数据分析</span></button>
+            <button class="nav-link" data-view="transactions" type="button" title="收支明细" aria-label="收支明细"><svg class="icon"><use href="#i-receipt"/></svg><span>收支明细</span><span id="nav-count" class="nav-count">0</span></button>
           </nav>
           <section class="sidebar-rule"><span class="nav-section-label">本月概览</span><div class="sidebar-rule-label"><span>生活支出</span><strong id="budget-spent-small">¥0</strong></div><div class="budget-progress-track"><span id="budget-progress-small"></span></div><p id="budget-caption-small">支出占收入 0%</p></section>
           <div class="sidebar-bottom"><div class="sidebar-note"><svg class="icon"><use href="#i-sparkle"/></svg><p>理性规划，<br>也别忘了好好生活。</p></div><div class="sidebar-account"><span id="account-avatar" class="avatar">林</span><span class="account-info"><strong id="account-name">林同学</strong><span id="account-email">demo@fencun.local</span></span><button id="logout-button" class="icon-button logout-button" type="button" aria-label="退出登录" title="退出登录"><svg class="icon"><use href="#i-arrow-left"/></svg></button></div></div>
@@ -102,6 +105,27 @@
               <section class="panel recent-panel" aria-labelledby="recent-title"><div class="panel-heading recent-heading"><div><span class="panel-kicker">A LITTLE EVERY DAY</span><h2 id="recent-title">最近记录</h2></div><button class="text-button view-all-button" type="button" data-view="transactions">查看全部 <svg class="icon"><use href="#i-chevron"/></svg></button></div><div id="recent-list" class="transaction-list"><p class="chart-empty">记录正在加载</p></div></section>
 
               <section class="closing-note"><svg class="icon"><use href="#i-sparkle"/></svg><span>收支有度，心里有数。</span><span class="closing-note-line"></span><span>记录生活，不定义生活。</span></section>
+            </section>
+
+            <section id="analysis-view" class="page-view" aria-label="数据分析" hidden>
+              <div class="records-title-row analysis-title-row"><div><span class="eyebrow">A CLOSER LOOK</span><h1>数据分析</h1><p>从日常记录里，看看收支的节奏。</p></div><label class="month-picker"><svg class="icon"><use href="#i-calendar"/></svg><input id="analysis-month" type="month" aria-label="选择分析月份"></label></div>
+              <div class="insight-grid" aria-label="月度分析指标">
+                <article class="insight-card" data-metric="change"><span class="insight-label">支出环比</span><strong id="analysis-change-value" class="insight-value">—</strong><span id="analysis-change-note" class="insight-note">与上月相比</span></article>
+                <article class="insight-card" data-metric="average"><span class="insight-label">有消费日均</span><strong id="analysis-average-value" class="insight-value">—</strong><span id="analysis-average-note" class="insight-note">按有支出的日期计算</span></article>
+                <article class="insight-card" data-metric="saving"><span class="insight-label">结余率</span><strong id="analysis-saving-value" class="insight-value">—</strong><span id="analysis-saving-note" class="insight-note">结余 ÷ 收入</span></article>
+                <article class="insight-card" data-metric="days"><span class="insight-label">消费天数</span><strong id="analysis-days-value" class="insight-value">—</strong><span id="analysis-days-note" class="insight-note">本月有支出的日期</span></article>
+              </div>
+
+              <div class="analytics-grid">
+                <section class="panel daily-analysis-panel" aria-labelledby="daily-analysis-title"><div class="panel-heading"><div><span class="panel-kicker">DAILY SPENDING</span><h2 id="daily-analysis-title">每日支出</h2></div><span class="analysis-unit">按记账日期</span></div><div id="daily-analysis-chart" class="daily-analysis-chart"><p class="chart-empty">每日数据正在加载</p></div><div class="analysis-foot"><span><i class="legend-dot legend-expense"></i>支出金额</span><span id="analysis-day-caption"></span></div></section>
+                <section class="panel comparison-panel" aria-labelledby="comparison-title"><div class="panel-heading"><div><span class="panel-kicker">MONTH OVER MONTH</span><h2 id="comparison-title">与上月对比</h2></div></div><div class="compare-legend"><span><i class="compare-swatch current-period"></i>本月</span><span><i class="compare-swatch previous-period"></i>上月</span></div><div id="month-comparison" class="month-comparison"><p class="chart-empty">月度对比正在加载</p></div><p class="comparison-note">环比按同一用户已记录的金额计算，不包含预算或预测。</p></section>
+              </div>
+
+              <div class="analysis-detail-grid">
+                <section class="panel detail-panel" aria-labelledby="analysis-category-title"><div class="panel-heading"><div><span class="panel-kicker">SPENDING MIX</span><h2 id="analysis-category-title">支出分类明细</h2></div></div><div id="analysis-category-list" class="analysis-category-list"><p class="chart-empty">分类正在加载</p></div></section>
+                <section class="panel detail-panel largest-expense-panel" aria-labelledby="largest-expense-title"><div class="panel-heading"><div><span class="panel-kicker">THE LARGEST ENTRY</span><h2 id="largest-expense-title">最大单笔支出</h2></div></div><div id="largest-expense" class="largest-expense"><p class="chart-empty">记录正在加载</p></div></section>
+              </div>
+              <p class="analysis-disclaimer">统计仅基于当前账本中已录入的流水；结余率不是投资收益率，也不代表未来支出。</p>
             </section>
 
             <section id="transactions-view" class="page-view" aria-label="收支明细" hidden>

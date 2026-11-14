@@ -100,6 +100,47 @@ test('authentication is required and user records stay isolated', async (t) => {
   assert.equal((await server.request(`/api/transactions/${itemId}`, { method: 'DELETE', cookie: alice })).response.status, 204);
 });
 
+test('dashboard analytics compare months and aggregate daily data per user', async (t) => {
+  const server = await launch(t);
+  const alice = await register(server, '小林', 'analytics@example.com');
+  const entries = [
+    { kind: 'expense', amount: 12.5, category: '餐饮', note: '上月午餐', occurredOn: '2026-03-22' },
+    { kind: 'expense', amount: 30, category: '餐饮', note: '午餐', occurredOn: '2026-04-02' },
+    { kind: 'income', amount: 200, category: '兼职', note: '结算', occurredOn: '2026-04-02' },
+    { kind: 'expense', amount: 85, category: '购物', note: '书包', occurredOn: '2026-04-18' },
+    { kind: 'income', amount: 100, category: '奖金', note: '奖学金', occurredOn: '2026-04-30' },
+  ];
+  for (const entry of entries) {
+    const result = await server.request('/api/transactions', { method: 'POST', cookie: alice, body: entry });
+    assert.equal(result.response.status, 201);
+  }
+
+  const bob = await register(server, '小周', 'other-analytics@example.com');
+  await server.request('/api/transactions', {
+    method: 'POST',
+    cookie: bob,
+    body: { kind: 'expense', amount: 2000, category: '居家', occurredOn: '2026-04-18' },
+  });
+
+  const result = await server.request('/api/dashboard?month=2026-04', { cookie: alice });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.payload.summary.expenses, 11_500);
+  assert.equal(result.payload.summary.income, 30_000);
+  assert.equal(result.payload.previousMonth, '2026-03');
+  assert.deepEqual(result.payload.previousSummary, { expenses: 1_250, income: 0, balance: -1_250 });
+  assert.equal(result.payload.daily.length, 30);
+  assert.deepEqual(result.payload.daily[1], {
+    date: '2026-04-02', day: 2, expenses: 3_000, income: 20_000, count: 2,
+  });
+  assert.deepEqual(result.payload.largestExpense, {
+    id: result.payload.largestExpense.id,
+    category: '购物',
+    note: '书包',
+    amount: 8_500,
+    occurredOn: '2026-04-18',
+  });
+});
+
 test('CSV import validates every row before writing and export round-trips notes', async (t) => {
   const server = await launch(t);
   await register(server, '小林', 'csv@example.com');

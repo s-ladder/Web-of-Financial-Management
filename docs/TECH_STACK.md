@@ -79,7 +79,7 @@ Express（server/index.js、server/app.js）
 | `POST /api/auth/logout` | Cookie 可选 | 删除当前会话并清理 Cookie。 |
 | `POST /api/auth/demo` | 仅演示模式 | 创建演示账户会话；生产禁用。 |
 | `GET /api/categories` | 登录 | 返回收入与支出分类。 |
-| `GET /api/dashboard?month=YYYY-MM` | 登录 | 返回月度汇总、支出前六分类、最近六个月趋势和最近记录。 |
+| `GET /api/dashboard?month=YYYY-MM` | 登录 | 返回月度汇总、上月对照、完整支出分类、逐日收支、最大单笔支出、最近六个月趋势和最近记录。 |
 | `GET /api/transactions?month=YYYY-MM&kind=expense&q=...` | 登录 | 按月份、类型和分类/备注搜索流水；单次最多返回 1,000 条。 |
 | `POST /api/transactions` | 登录 | 新建一条当前用户流水。 |
 | `PUT /api/transactions/:id` | 登录 | 更新当前用户拥有的流水。 |
@@ -92,7 +92,11 @@ Express（server/index.js、server/app.js）
 ## 前端渲染
 
 - `public/index.html` 提供登录/注册、总览、流水列表和录入对话框的静态骨架；`public/app.js` 作为原生 ES module 执行，不经过转译或打包。
-- 页面通过 DOM API 建立流水行、分类列表和图表；收支趋势以原生 SVG 绘制，分类占比以 CSS 宽度条显示，不依赖图表库。`Intl.NumberFormat` 用于人民币显示，`Intl.DateTimeFormat` 用于日期展示。
+- 页面通过 DOM API 建立流水行、分类列表和图表；六个月收支趋势与逐日支出图以原生 SVG 绘制，分类占比、月份比较条以 CSS 宽度条显示，不依赖图表库。`Intl.NumberFormat` 用于人民币显示，`Intl.DateTimeFormat` 用于日期展示。
+- 总览提供月度收支汇总、六个月趋势和前六个支出分类；独立的“数据分析”视图提供支出环比、按有支出的日期计算的日均支出、结余率、消费天数、逐日支出图、上月收入/支出对照、全部支出分类占比和最大单笔支出。
+- 所有分析数据由已登录用户的服务端查询产生，并按会话中的 `user_id` 过滤。选月后，汇总、对照、分类、逐日序列和最大单笔使用同一个月参数；逐日数组包含该月的每个自然日，没有流水的日期以 0 元显示。
+- 分析口径：支出环比为 `(本月支出 - 上月支出) / 上月支出`，上月没有支出时显示“新基准”而不伪造百分比；有消费日均为本月支出总额除以至少有一笔支出的日期数；结余率为 `(本月收入 - 本月支出) / 本月收入`，无收入时不计算。它们仅描述账本已录入流水，不是预算预测或投资回报指标。
+- 登录欢迎区使用项目内静态图片 `public/images/welcome-landscape.jpg`；图片在部署前已本地化，不依赖浏览器访问第三方图片 CDN。图片来自 Unsplash，并在页面标注来源；Unsplash 官方许可允许在遵守其条款的前提下免费使用图片，署名虽非必需但受到鼓励。请查看[Unsplash License](https://unsplash.com/license)。
 - 浏览器端维护当前用户、月份、收支筛选、搜索词及正在编辑的流水等内存状态；月度数据从 API 拉取。搜索输入有 180 毫秒防抖。静态 CSS 包含窄屏布局与减少动态效果的媒体查询。
 - 页面与 API 由同一个 Express origin 提供，`fetch` 使用 same-origin 凭据；项目没有独立前端路由、客户端持久化账本或服务端渲染。
 

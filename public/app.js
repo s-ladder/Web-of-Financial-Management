@@ -4,7 +4,7 @@ const currency = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maxi
 const dayFormat = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', weekday: 'short' });
 const options = { expense: ['餐饮', '交通', '日用', '居家', '购物', '娱乐', '医疗', '学习', '其他'], income: ['工资', '兼职', '奖金', '退款', '其他'] };
 const categoryIcons = { 餐饮: 'coffee', 交通: 'train', 日用: 'bag', 居家: 'home', 购物: 'bag', 娱乐: 'film', 医疗: 'pill', 学习: 'book', 工资: 'wallet', 兼职: 'user', 奖金: 'gift', 退款: 'arrow-left', 其他: 'receipt' };
-const state = { user: null, demo: false, month: currentMonth(), filter: 'all', search: '', records: [], editing: null, kind: 'expense', recordRequest: 0, overviewRequest: 0 };
+const state = { user: null, demo: false, month: currentMonth(), filter: 'all', search: '', records: [], dashboard: null, editing: null, kind: 'expense', recordRequest: 0, overviewRequest: 0 };
 
 function currentMonth() {
   const date = new Date();
@@ -69,6 +69,7 @@ function setAuthMode(registering) {
 
 function showAuth() {
   state.user = null;
+  clearWorkspaceData();
   query('#workspace').hidden = true;
   query('#auth-screen').hidden = false;
   query('#demo-divider').hidden = !state.demo;
@@ -78,9 +79,11 @@ function showAuth() {
 
 function enterWorkspace(user) {
   state.user = user;
+  clearWorkspaceData();
   query('#auth-screen').hidden = true;
   query('#workspace').hidden = false;
   query('#overview-month').value = state.month;
+  query('#analysis-month').value = state.month;
   query('#records-month').value = state.month;
   const date = new Date();
   const hour = date.getHours();
@@ -94,6 +97,42 @@ function enterWorkspace(user) {
   return refreshOverview();
 }
 
+function clearWorkspaceData() {
+  state.dashboard = null;
+  state.records = [];
+  state.overviewRequest += 1;
+  state.recordRequest += 1;
+  query('#stat-expenses').textContent = '—';
+  query('#stat-income').textContent = '—';
+  query('#stat-balance').textContent = '—';
+  query('#stat-balance').classList.remove('amount-expense', 'amount-income');
+  query('#stat-expense-count').textContent = '0 笔记录';
+  query('#chart-month-total').textContent = '';
+  query('#budget-spent-small').textContent = '¥0';
+  query('#budget-progress-small').style.width = '0%';
+  query('#budget-caption-small').textContent = '记录收入后显示收支比例';
+  query('#nav-count').textContent = '0';
+  for (const selector of ['#trend-chart', '#category-list', '#recent-list', '#daily-analysis-chart', '#month-comparison', '#analysis-category-list', '#largest-expense']) {
+    query(selector).replaceChildren();
+  }
+  for (const selector of ['#analysis-change-value', '#analysis-average-value', '#analysis-saving-value', '#analysis-days-value']) {
+    query(selector).textContent = '—';
+  }
+  for (const selector of ['#analysis-change-note', '#analysis-average-note', '#analysis-saving-note', '#analysis-days-note', '#analysis-day-caption']) {
+    query(selector).textContent = '';
+  }
+  all('.insight-card').forEach((card) => { card.dataset.state = 'neutral'; });
+  query('#records-body').replaceChildren();
+  query('.records-table').hidden = true;
+  query('#record-count').textContent = '共 0 条记录';
+  query('#records-empty').hidden = false;
+  query('#overview-view').hidden = false;
+  query('#analysis-view').hidden = true;
+  query('#transactions-view').hidden = true;
+  query('#breadcrumb-current').textContent = '总览';
+  all('.nav-link').forEach((button) => button.classList.toggle('is-active', button.dataset.view === 'overview'));
+}
+
 async function refreshOverview() {
   const requestId = ++state.overviewRequest;
   try {
@@ -102,6 +141,7 @@ async function refreshOverview() {
       loadRecords(),
     ]);
     if (requestId !== state.overviewRequest) return;
+    state.dashboard = dashboard;
     query('#stat-expenses').textContent = money(dashboard.summary.expenses);
     query('#stat-income').textContent = money(dashboard.summary.income);
     const balance = query('#stat-balance');
@@ -111,9 +151,10 @@ async function refreshOverview() {
     query('#stat-expense-count').textContent = `${dashboard.summary.count} 笔记录`;
     query('#chart-month-total').textContent = `${dashboard.month.slice(0, 4)} 年`;
     renderTrend(dashboard.trend);
-    renderCategories(dashboard.categories, dashboard.summary.expenses);
+    renderCategories(dashboard.categories.slice(0, 6), dashboard.summary.expenses);
     renderRecent(dashboard.recent);
     renderBudget(dashboard.summary.expenses, dashboard.summary.income);
+    renderAnalytics(dashboard);
   } catch (error) {
     if (error.message === '请先登录。') showAuth();
     else toast(error.message, 'error');
@@ -230,6 +271,216 @@ function renderBudget(expenses, income) {
   const percentage = income > 0 ? spent / income * 100 : 0;
   query('#budget-progress-small').style.width = `${Math.min(100, percentage)}%`;
   query('#budget-caption-small').textContent = income > 0 ? `支出占收入 ${percentage.toFixed(0)}%` : '记录收入后显示收支比例';
+}
+
+function renderAnalytics(dashboard) {
+  const { summary, previousSummary, daily, categories, largestExpense } = dashboard;
+  const expenseDays = daily.filter((item) => item.expenses > 0).length;
+  const expenseDelta = summary.expenses - previousSummary.expenses;
+  const changeValue = query('#analysis-change-value');
+  const changeCard = query('[data-metric="change"]');
+
+  changeCard.dataset.state = expenseDelta < 0 ? 'positive' : expenseDelta > 0 ? 'negative' : 'neutral';
+  if (previousSummary.expenses > 0) {
+    const percentage = Math.abs(expenseDelta / previousSummary.expenses * 100);
+    changeValue.textContent = expenseDelta === 0 ? '持平' : `${expenseDelta < 0 ? '−' : '+'}${percentage.toFixed(1)}%`;
+    query('#analysis-change-note').textContent = `${expenseDelta < 0 ? '少花' : expenseDelta > 0 ? '多花' : '与上月相同'} ${money(Math.abs(expenseDelta))}`;
+  } else if (summary.expenses > 0) {
+    changeValue.textContent = '新基准';
+    query('#analysis-change-note').textContent = '上月无支出记录，暂不计算环比';
+    changeCard.dataset.state = 'neutral';
+  } else {
+    changeValue.textContent = '—';
+    query('#analysis-change-note').textContent = '本月和上月暂无支出';
+    changeCard.dataset.state = 'neutral';
+  }
+
+  query('#analysis-average-value').textContent = expenseDays ? money(Math.round(summary.expenses / expenseDays)) : '—';
+  query('#analysis-average-note').textContent = expenseDays ? `按 ${expenseDays} 个有支出的日期计算` : '暂无支出记录';
+  const savingCard = query('[data-metric="saving"]');
+  const savingValue = query('#analysis-saving-value');
+  if (summary.income > 0) {
+    const savingRate = summary.balance / summary.income * 100;
+    savingValue.textContent = `${savingRate.toFixed(1)}%`;
+    savingCard.dataset.state = savingRate < 0 ? 'negative' : 'positive';
+    query('#analysis-saving-note').textContent = `${summary.balance < 0 ? '超出收入' : '结余'} ${money(Math.abs(summary.balance))}`;
+  } else {
+    savingValue.textContent = '—';
+    savingCard.dataset.state = 'neutral';
+    query('#analysis-saving-note').textContent = '记录收入后计算结余率';
+  }
+  query('#analysis-days-value').textContent = `${expenseDays} 天`;
+  query('#analysis-days-note').textContent = `本月共 ${daily.length} 天`;
+  query('#analysis-day-caption').textContent = `${daily.reduce((total, item) => total + item.count, 0)} 笔流水 · 支出 ${money(summary.expenses)}`;
+  renderDailyAnalysis(daily);
+  renderMonthComparison(summary, previousSummary, dashboard.previousMonth);
+  renderAnalyticsCategories(categories, summary.expenses);
+  renderLargestExpense(largestExpense);
+}
+
+function renderDailyAnalysis(days) {
+  const root = query('#daily-analysis-chart');
+  root.replaceChildren();
+  if (!days.some((item) => item.expenses > 0)) {
+    const empty = document.createElement('p');
+    empty.className = 'chart-empty';
+    empty.textContent = '这个月还没有支出记录。';
+    root.append(empty);
+    return;
+  }
+
+  const svg = svgElement('svg', { class: 'daily-analysis-svg', viewBox: '0 0 720 208', role: 'img', 'aria-label': '本月逐日支出柱状图' });
+  const maximum = Math.max(1, ...days.map((item) => item.expenses));
+  const left = 46;
+  const right = 708;
+  const top = 15;
+  const bottom = 164;
+  const step = (right - left) / days.length;
+  const barWidth = Math.min(14, step * 0.58);
+
+  for (let index = 0; index < 4; index += 1) {
+    const y = top + (bottom - top) * index / 3;
+    svg.append(svgElement('line', { x1: left, y1: y, x2: right, y2: y, class: 'trend-grid-line' }));
+    const label = svgElement('text', { x: left - 8, y: y + 3, 'text-anchor': 'end', class: 'trend-axis-label' });
+    label.textContent = shortMoney(maximum * (1 - index / 3));
+    svg.append(label);
+  }
+
+  days.forEach((item, index) => {
+    const center = left + step * (index + 0.5);
+    const height = item.expenses ? Math.max(2, item.expenses / maximum * (bottom - top)) : 0;
+    if (height > 0) {
+      const bar = svgElement('rect', {
+        x: center - barWidth / 2,
+        y: bottom - height,
+        width: barWidth,
+        height,
+        rx: 2,
+        class: 'daily-analysis-bar',
+      });
+      const title = svgElement('title');
+      title.textContent = `${item.date} 支出 ${money(item.expenses)} · ${item.count} 笔流水`;
+      bar.append(title);
+      svg.append(bar);
+    }
+    if (index % 5 === 0 || index === days.length - 1) {
+      const label = svgElement('text', { x: center, y: 188, 'text-anchor': 'middle', class: 'trend-axis-label' });
+      label.textContent = String(item.day);
+      svg.append(label);
+    }
+  });
+
+  root.append(svg);
+}
+
+function renderMonthComparison(current, previous, previousMonth) {
+  const root = query('#month-comparison');
+  root.replaceChildren();
+  const months = [
+    { key: 'expenses', label: '支出' },
+    { key: 'income', label: '收入' },
+  ];
+  const maximum = Math.max(1, ...months.flatMap(({ key }) => [current[key], previous[key]]));
+  const previousLabel = `${Number(previousMonth.slice(5))} 月`;
+
+  for (const { key, label } of months) {
+    const row = document.createElement('section');
+    row.className = 'comparison-item';
+    const heading = document.createElement('div');
+    heading.className = 'comparison-item-heading';
+    const title = document.createElement('strong');
+    title.textContent = label;
+    heading.append(title);
+    row.append(heading);
+
+    for (const [period, amount, className] of [
+      ['本月', current[key], 'current-period'],
+      [previousLabel, previous[key], 'previous-period'],
+    ]) {
+      const line = document.createElement('div');
+      line.className = 'comparison-line';
+      const periodLabel = document.createElement('span');
+      periodLabel.className = 'comparison-period-label';
+      periodLabel.textContent = period;
+      const track = document.createElement('span');
+      track.className = 'comparison-track';
+      const bar = document.createElement('span');
+      bar.className = `comparison-bar ${className}`;
+      bar.style.width = `${Math.max(0, amount / maximum * 100)}%`;
+      track.append(bar);
+      const value = document.createElement('strong');
+      value.className = 'comparison-value';
+      value.textContent = money(amount);
+      line.append(periodLabel, track, value);
+      row.append(line);
+    }
+    root.append(row);
+  }
+}
+
+function renderAnalyticsCategories(items, total) {
+  const root = query('#analysis-category-list');
+  root.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement('p');
+    empty.className = 'chart-empty';
+    empty.textContent = '这个月还没有支出分类。';
+    root.append(empty);
+    return;
+  }
+
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'analysis-category-row';
+    const heading = document.createElement('div');
+    heading.className = 'analysis-category-heading';
+    const label = document.createElement('span');
+    label.textContent = item.category;
+    const value = document.createElement('strong');
+    value.textContent = money(item.amount);
+    heading.append(label, value);
+    const track = document.createElement('span');
+    track.className = 'category-bar-track';
+    const bar = document.createElement('span');
+    bar.className = 'category-bar';
+    const share = total ? item.amount / total * 100 : 0;
+    bar.style.width = `${Math.min(100, share)}%`;
+    track.append(bar);
+    const detail = document.createElement('span');
+    detail.className = 'analysis-category-foot';
+    detail.textContent = `${share.toFixed(1)}% · ${item.count} 笔`;
+    row.append(heading, track, detail);
+    root.append(row);
+  }
+}
+
+function renderLargestExpense(item) {
+  const root = query('#largest-expense');
+  root.replaceChildren();
+  if (!item) {
+    const empty = document.createElement('p');
+    empty.className = 'chart-empty';
+    empty.textContent = '这个月还没有支出记录。';
+    root.append(empty);
+    return;
+  }
+
+  const category = document.createElement('span');
+  category.className = 'largest-expense-category';
+  category.append(icon(categoryIcons[item.category] || 'receipt'));
+  const name = document.createElement('strong');
+  name.textContent = item.category;
+  category.append(name);
+  const amount = document.createElement('strong');
+  amount.className = 'largest-expense-amount';
+  amount.textContent = `−${money(item.amount)}`;
+  const note = document.createElement('p');
+  note.className = 'largest-expense-note';
+  note.textContent = item.note || '未填写备注';
+  const date = document.createElement('span');
+  date.className = 'largest-expense-date';
+  date.textContent = item.occurredOn;
+  root.append(category, amount, note, date);
 }
 
 function formatDate(value) {
@@ -457,18 +708,24 @@ async function refreshRecords() {
 }
 
 async function switchView(view) {
-  const showingRecords = view === 'transactions';
-  query('#overview-view').hidden = showingRecords;
-  query('#transactions-view').hidden = !showingRecords;
-  query('#breadcrumb-current').textContent = showingRecords ? '收支明细' : '总览';
+  const views = {
+    overview: { element: query('#overview-view'), label: '总览' },
+    analysis: { element: query('#analysis-view'), label: '数据分析' },
+    transactions: { element: query('#transactions-view'), label: '收支明细' },
+  };
+  if (!views[view]) return;
+  Object.entries(views).forEach(([key, item]) => { item.element.hidden = key !== view; });
+  query('#breadcrumb-current').textContent = views[view].label;
   all('.nav-link').forEach((button) => button.classList.toggle('is-active', button.dataset.view === view));
-  if (showingRecords) await refreshRecords();
+  if (view === 'transactions') await refreshRecords();
+  if (view === 'analysis' && !state.dashboard) await refreshOverview();
 }
 
 function setMonth(value) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return;
   state.month = value;
   query('#overview-month').value = value;
+  query('#analysis-month').value = value;
   query('#records-month').value = value;
   refreshOverview();
 }
@@ -530,6 +787,7 @@ function bindEvents() {
 
   all('[data-view]').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));
   query('#overview-month').addEventListener('change', (event) => setMonth(event.currentTarget.value));
+  query('#analysis-month').addEventListener('change', (event) => setMonth(event.currentTarget.value));
   query('#records-month').addEventListener('change', (event) => setMonth(event.currentTarget.value));
   all('.filter-tab').forEach((button) => button.addEventListener('click', () => {
     state.filter = button.dataset.filter;

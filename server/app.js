@@ -261,6 +261,13 @@ export async function createApp({
 
   app.get('/api/dashboard', requireUser, async (req, res) => {
     const month = monthKey(req.query.month);
+    const [year, monthNumber] = month.split('-').map(Number);
+    const previousDate = new Date(Date.UTC(year, monthNumber - 2, 1));
+    const nextDate = new Date(Date.UTC(year, monthNumber, 1));
+    const previousMonth = `${previousDate.getUTCFullYear()}-${String(previousDate.getUTCMonth() + 1).padStart(2, '0')}`;
+    const monthStart = `${month}-01`;
+    const nextMonthStart = `${nextDate.getUTCFullYear()}-${String(nextDate.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    const daysInMonth = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
     const summary = await db.get(`
       SELECT
         COALESCE(SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END), 0) AS expenses,
@@ -268,11 +275,33 @@ export async function createApp({
         COUNT(*) AS count
       FROM transactions WHERE user_id = ? AND substr(occurred_on, 1, 7) = ?
     `, req.user.id, month);
+    const previousSummary = await db.get(`
+      SELECT
+        COALESCE(SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END), 0) AS expenses,
+        COALESCE(SUM(CASE WHEN kind = 'income' THEN amount ELSE 0 END), 0) AS income
+      FROM transactions WHERE user_id = ? AND occurred_on >= ? AND occurred_on < ?
+    `, req.user.id, `${previousMonth}-01`, monthStart);
     const categories = await db.all(`
       SELECT category, SUM(amount) AS amount, COUNT(*) AS count
       FROM transactions WHERE user_id = ? AND kind = 'expense' AND substr(occurred_on, 1, 7) = ?
-      GROUP BY category ORDER BY amount DESC LIMIT 6
+      GROUP BY category ORDER BY amount DESC
     `, req.user.id, month);
+    const dailyRows = await db.all(`
+      SELECT occurred_on AS date,
+        SUM(CASE WHEN kind = 'expense' THEN amount ELSE 0 END) AS expenses,
+        SUM(CASE WHEN kind = 'income' THEN amount ELSE 0 END) AS income,
+        COUNT(*) AS count
+      FROM transactions
+      WHERE user_id = ? AND occurred_on >= ? AND occurred_on < ?
+      GROUP BY occurred_on ORDER BY occurred_on
+    `, req.user.id, monthStart, nextMonthStart);
+    const dailyByDate = new Map(dailyRows.map((row) => [row.date, row]));
+    const largestExpense = await db.get(`
+      SELECT id, category, note, amount, occurred_on AS "occurredOn"
+      FROM transactions
+      WHERE user_id = ? AND kind = 'expense' AND occurred_on >= ? AND occurred_on < ?
+      ORDER BY amount DESC, occurred_on DESC, id DESC LIMIT 1
+    `, req.user.id, monthStart, nextMonthStart);
     const range = monthRange(month);
     const trendRows = await db.all(`
       SELECT substr(occurred_on, 1, 7) AS month,
@@ -297,7 +326,29 @@ export async function createApp({
         balance: Number(summary.income) - Number(summary.expenses),
         count: Number(summary.count),
       },
+      previousMonth,
+      previousSummary: {
+        expenses: Number(previousSummary.expenses),
+        income: Number(previousSummary.income),
+        balance: Number(previousSummary.income) - Number(previousSummary.expenses),
+      },
       categories: categories.map((row) => ({ ...row, amount: Number(row.amount), count: Number(row.count) })),
+      daily: Array.from({ length: daysInMonth }, (_item, index) => {
+        const date = `${month}-${String(index + 1).padStart(2, '0')}`;
+        const row = dailyByDate.get(date);
+        return {
+          date,
+          day: index + 1,
+          expenses: Number(row?.expenses ?? 0),
+          income: Number(row?.income ?? 0),
+          count: Number(row?.count ?? 0),
+        };
+      }),
+      largestExpense: largestExpense ? {
+        ...largestExpense,
+        id: Number(largestExpense.id),
+        amount: Number(largestExpense.amount),
+      } : null,
       trend: range.labels.map(({ key, label }) => {
         const row = trendByMonth.get(key);
         return { month: key, label, expenses: Number(row?.expenses ?? 0), income: Number(row?.income ?? 0) };
