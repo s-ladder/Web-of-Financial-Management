@@ -494,7 +494,16 @@ export async function createApp({
   });
 
   app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在。' }));
-  app.use(express.static(publicDirectory, { index: 'index.html', dotfiles: 'deny', maxAge: '1h' }));
+  app.use(express.static(publicDirectory, {
+    index: 'index.html',
+    dotfiles: 'deny',
+    maxAge: '1h',
+    setHeaders(res, filePath) {
+      if (/\.(?:html|css|js)$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+      }
+    },
+  }));
   app.use((error, _req, res, _next) => {
     if (res.headersSent) return;
     const status = error.status ?? 500;

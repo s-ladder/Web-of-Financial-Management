@@ -229,3 +229,15 @@ test('production mode never exposes the demo account', async (t) => {
   assert.deepEqual((await server.request('/api/config')).payload, { demoMode: false });
   assert.equal((await server.request('/api/auth/demo', { method: 'POST' })).response.status, 404);
 });
+
+test('HTML and frontend assets are revalidated instead of kept stale', async (t) => {
+  const server = await launch(t);
+  for (const asset of ['/', '/styles.css', '/app.js']) {
+    const result = await server.request(asset);
+    assert.equal(result.response.status, 200);
+    assert.equal(result.response.headers.get('cache-control'), 'no-cache, must-revalidate');
+  }
+  const image = await server.request('/images/welcome-landscape.jpg');
+  assert.equal(image.response.status, 200);
+  assert.match(image.response.headers.get('cache-control'), /max-age=3600/);
+});
