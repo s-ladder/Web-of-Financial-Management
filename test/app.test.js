@@ -67,9 +67,13 @@ test('authentication is required and user records stay isolated', async (t) => {
   const alice = await register(server, '小林', 'alice@example.com');
   const created = await server.request('/api/transactions', {
     method: 'POST',
-    body: { kind: 'expense', amount: 18.45, category: '餐饮', note: '校园午饭', occurredOn: localDate() },
+    body: { kind: 'expense', amount: 18.45, category: '餐饮', project: '午饭，外卖', content: '土豆牛肉盖浇饭', occurredOn: localDate() },
   });
   assert.equal(created.response.status, 201);
+  assert.equal(created.payload.location, '学校');
+  assert.equal(created.payload.detailTime, '');
+  assert.equal(created.payload.project, '午饭，外卖');
+  assert.equal(created.payload.content, '土豆牛肉盖浇饭');
   const itemId = created.payload.id;
 
   const bob = await register(server, '小周', 'bob@example.com');
@@ -95,6 +99,9 @@ test('authentication is required and user records stay isolated', async (t) => {
     body: { kind: 'income', amount: 20.5, category: '兼职', note: '设计稿', occurredOn: localDate() },
   });
   assert.equal(updated.response.status, 200);
+  assert.equal(updated.payload.location, '学校');
+  assert.equal(updated.payload.project, '设计稿');
+  assert.equal(updated.payload.content, '土豆牛肉盖浇饭');
   const updatedDashboard = await server.request(`/api/dashboard?month=${localDate().slice(0, 7)}`, { cookie: alice });
   assert.equal(updatedDashboard.payload.summary.expenses, 0);
   assert.equal(updatedDashboard.payload.summary.income, 2050);
@@ -136,13 +143,14 @@ test('dashboard analytics compare months and aggregate daily data per user', asy
   assert.deepEqual(result.payload.largestExpense, {
     id: result.payload.largestExpense.id,
     category: '购物',
+    project: '书包',
     note: '书包',
     amount: 8_500,
     occurredOn: '2026-04-18',
   });
 });
 
-test('CSV import validates every row before writing and export round-trips notes', async (t) => {
+test('CSV import remains backward compatible and round-trips all optional details', async (t) => {
   const server = await launch(t);
   await register(server, '小林', 'csv@example.com');
   const date = localDate();
@@ -167,17 +175,45 @@ test('CSV import validates every row before writing and export round-trips notes
   });
   assert.equal(imported.response.status, 201);
   assert.equal(imported.payload.imported, 1);
+  const detailedImport = await server.request('/api/import.csv', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/csv; charset=utf-8' },
+    body: `date,time,type,category,amount,location,project,content\r\n${date},12:30:45,expense,学习,9.50,图书馆,学习资料,参考书\r\n${date},18:00:00,income,兼职,500.00,,兼职结算,设计稿结算`,
+  });
+  assert.equal(detailedImport.response.status, 201);
+  assert.equal(detailedImport.payload.imported, 2);
+  const records = await server.request(`/api/transactions?month=${date.slice(0, 7)}`);
+  assert.equal(records.payload.transactions[0].location, '');
+  assert.equal(records.payload.transactions[0].content, '设计稿结算');
+  assert.equal(records.payload.transactions[0].project, '兼职结算');
+  assert.equal(records.payload.transactions[1].detailTime, '12:30:45');
+  assert.equal(records.payload.transactions[1].location, '图书馆');
+  assert.equal(records.payload.transactions[1].content, '参考书');
+  assert.equal(records.payload.transactions[1].project, '学习资料');
+  assert.equal(records.payload.transactions[2].location, '学校');
+  assert.equal(records.payload.transactions[2].content, '');
+  assert.equal(records.payload.transactions[2].project, '午餐, 加豆浆');
+  const searchByLocation = await server.request(
+    `/api/transactions?month=${date.slice(0, 7)}&q=${encodeURIComponent('图书馆')}`,
+  );
+  assert.equal(searchByLocation.payload.transactions.length, 1);
+  assert.equal(searchByLocation.payload.transactions[0].content, '参考书');
+  const searchByProject = await server.request(
+    `/api/transactions?month=${date.slice(0, 7)}&q=${encodeURIComponent('学习资料')}`,
+  );
+  assert.equal(searchByProject.payload.transactions.length, 1);
   const formulaNote = await server.request('/api/transactions', {
     method: 'POST',
-    body: { kind: 'expense', amount: 1, category: '其他', note: '=1+1', occurredOn: date },
+    body: { kind: 'expense', amount: 1, category: '其他', content: '=cmd()', note: '=1+1', occurredOn: date },
   });
   assert.equal(formulaNote.response.status, 201);
 
   const exported = await server.request('/api/export.csv');
   assert.deepEqual(exported.payload.subarray(0, 3), Buffer.from([0xef, 0xbb, 0xbf]));
-  assert.match(exported.payload.toString('utf8'), /^\uFEFFdate,type,category,amount,note/);
-  assert.match(exported.payload.toString('utf8'), /"18\.45","午餐, 加豆浆"/);
-  assert.match(exported.payload.toString('utf8'), /"1\.00","'=1\+1"/);
+  assert.match(exported.payload.toString('utf8'), /^\uFEFFdate,time,type,category,amount,location,project,content/);
+  assert.match(exported.payload.toString('utf8'), /"18\.45","学校","午餐, 加豆浆",""/);
+  assert.match(exported.payload.toString('utf8'), /"12:30:45","expense","学习","9\.50","图书馆","学习资料","参考书"/);
+  assert.match(exported.payload.toString('utf8'), /"1\.00","学校","'=1\+1","'=cmd\(\)"/);
 });
 
 test('amounts, dates, duplicate emails, and failed login are validated', async (t) => {
@@ -203,6 +239,10 @@ test('amounts, dates, duplicate emails, and failed login are validated', async (
   assert.equal((await server.request('/api/transactions', {
     method: 'POST',
     body: { kind: 'expense', amount: 1, category: '未知分类', occurredOn: localDate() },
+  })).response.status, 400);
+  assert.equal((await server.request('/api/transactions', {
+    method: 'POST',
+    body: { kind: 'expense', amount: 1, category: '餐饮', occurredOn: localDate(), detailTime: '24:00:00' },
   })).response.status, 400);
 });
 
@@ -378,4 +418,8 @@ test('existing SQLite ledgers gain profile and household fields without losing r
   assert.equal(user.profileType, 'student');
   assert.equal(transaction.householdId, null);
   assert.equal(transaction.note, '保留的旧记录');
+  const addedFields = await app.locals.database.get(
+    'SELECT project, detail_time AS "detailTime", location, content FROM transactions WHERE id = ?', 1,
+  );
+  assert.deepEqual({ ...addedFields }, { project: '保留的旧记录', detailTime: null, location: null, content: null });
 });

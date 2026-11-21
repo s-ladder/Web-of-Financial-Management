@@ -4,7 +4,7 @@ const currency = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maxi
 const dayFormat = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', weekday: 'short' });
 const options = { expense: ['餐饮', '交通', '日用', '居家', '购物', '娱乐', '医疗', '学习', '其他'], income: ['工资', '兼职', '奖金', '退款', '其他'] };
 const categoryIcons = { 餐饮: 'coffee', 交通: 'train', 日用: 'bag', 居家: 'home', 购物: 'bag', 娱乐: 'film', 医疗: 'pill', 学习: 'book', 工资: 'wallet', 兼职: 'user', 奖金: 'gift', 退款: 'arrow-left', 其他: 'receipt' };
-const state = { user: null, profileType: 'student', household: null, ledgerScope: 'personal', categories: options, demo: false, month: currentMonth(), filter: 'all', search: '', records: [], dashboard: null, editing: null, kind: 'expense', recordRequest: 0, overviewRequest: 0 };
+const state = { user: null, profileType: 'student', household: null, ledgerScope: 'personal', categories: options, demo: false, month: currentMonth(), trendMode: 'month', filter: 'all', search: '', records: [], dashboard: null, editing: null, kind: 'expense', recordRequest: 0, overviewRequest: 0 };
 const profileLabels = { student: '学生账本', employee: '上班族账本', family: '家庭账本' };
 
 function scoped(path) {
@@ -182,8 +182,7 @@ async function refreshOverview() {
     balance.classList.toggle('amount-expense', dashboard.summary.balance < 0);
     balance.classList.toggle('amount-income', dashboard.summary.balance > 0);
     query('#stat-expense-count').textContent = `${dashboard.summary.count} 笔记录`;
-    query('#chart-month-total').textContent = `${dashboard.month.slice(0, 4)} 年`;
-    renderTrend(dashboard.trend);
+    renderTrend(dashboard);
     renderCategories(dashboard.categories.slice(0, 6), dashboard.summary.expenses);
     renderRecent(dashboard.recent);
     renderBudget(dashboard.summary.expenses, dashboard.summary.income);
@@ -208,18 +207,24 @@ function shortMoney(cents) {
   return amount.toFixed(0);
 }
 
-function renderTrend(months) {
+function renderTrend(dashboard) {
   const root = query('#trend-chart');
+  const isDaily = state.trendMode === 'day';
+  const points = isDaily
+    ? dashboard.daily.map((item) => ({ ...item, label: `${item.day}日` }))
+    : dashboard.trend;
+  query('#trend-period-caption').textContent = isDaily ? '所选月份每日收支' : '最近六个月的收支变化';
+  query('#chart-month-total').textContent = isDaily ? dashboard.month : '近 6 个月';
   root.replaceChildren();
-  if (!months.length) {
+  if (!points.length) {
     const empty = document.createElement('p');
     empty.className = 'chart-empty';
     empty.textContent = '添加一笔记录，开始看见你的收支走势。';
     root.append(empty);
     return;
   }
-  const svg = svgElement('svg', { class: 'trend-svg', viewBox: '0 0 640 162', role: 'img', 'aria-label': '最近六个月的收入和支出趋势图' });
-  const maximum = Math.max(1, ...months.flatMap((item) => [item.expenses, item.income])) * 1.12;
+  const svg = svgElement('svg', { class: 'trend-svg', viewBox: '0 0 640 162', role: 'img', 'aria-label': isDaily ? `${dashboard.month}每日收入和支出趋势图` : '最近六个月的收入和支出趋势图' });
+  const maximum = Math.max(1, ...points.flatMap((item) => [item.expenses, item.income])) * 1.12;
   const left = 44;
   const right = 628;
   const top = 12;
@@ -231,12 +236,12 @@ function renderTrend(months) {
     label.textContent = shortMoney(maximum * (1 - index / 3));
     svg.append(label);
   }
-  const x = (index) => months.length === 1 ? (left + right) / 2 : left + index * (right - left) / (months.length - 1);
+  const x = (index) => points.length === 1 ? (left + right) / 2 : left + index * (right - left) / (points.length - 1);
   const y = (amount) => bottom - Number(amount) / maximum * (bottom - top);
   for (const [key, kind] of [['expenses', 'expense'], ['income', 'income']]) {
-    const points = months.map((item, index) => `${x(index)},${y(item[key])}`).join(' ');
-    svg.append(svgElement('polyline', { points, class: `trend-line-${kind}` }));
-    months.forEach((item, index) => {
+    const coordinates = points.map((item, index) => `${x(index)},${y(item[key])}`).join(' ');
+    svg.append(svgElement('polyline', { points: coordinates, class: `trend-line-${kind}` }));
+    points.forEach((item, index) => {
       const point = svgElement('circle', { cx: x(index), cy: y(item[key]), r: 3.2, class: `trend-point-${kind}` });
       const title = svgElement('title');
       title.textContent = `${item.label} ${key === 'expenses' ? '支出' : '收入'} ${money(item[key])}`;
@@ -244,7 +249,9 @@ function renderTrend(months) {
       svg.append(point);
     });
   }
-  months.forEach((item, index) => {
+  const labelInterval = isDaily && points.length > 12 ? 5 : 1;
+  points.forEach((item, index) => {
+    if (index % labelInterval !== 0 && index !== points.length - 1) return;
     const label = svgElement('text', { x: x(index), y: 143, 'text-anchor': 'middle', class: 'trend-axis-label' });
     label.textContent = item.label;
     svg.append(label);
@@ -509,7 +516,7 @@ function renderLargestExpense(item) {
   amount.textContent = `−${money(item.amount)}`;
   const note = document.createElement('p');
   note.className = 'largest-expense-note';
-  note.textContent = item.note || '未填写备注';
+  note.textContent = item.project || '未填写项目';
   const date = document.createElement('span');
   date.className = 'largest-expense-date';
   date.textContent = item.occurredOn;
@@ -541,11 +548,18 @@ function transactionRow(item, recent = false) {
   description.className = 'transaction-sub';
   const note = document.createElement('span');
   note.className = 'transaction-note';
-  note.textContent = item.note || '—';
+  note.textContent = item.project || '未填写项目';
   const date = document.createElement('span');
   date.className = 'transaction-date';
   date.textContent = formatDate(item.occurredOn);
-  description.append(note, date);
+  description.append(note);
+  if (item.content) {
+    const content = document.createElement('span');
+    content.className = 'transaction-note';
+    content.textContent = `内容：${item.content}`;
+    description.append(content);
+  }
+  description.append(date);
   const amount = document.createElement('span');
   amount.className = `transaction-amount ${item.kind === 'income' ? 'amount-income' : 'amount-expense'}`;
   amount.textContent = `${item.kind === 'income' ? '+' : '−'}${money(item.amount)}`;
@@ -603,16 +617,33 @@ async function loadRecords() {
     name.textContent = item.category;
     label.append(dot, name);
     categoryCell.append(label);
-    const note = document.createElement('td');
-    note.textContent = item.note || '—';
+    const projectCell = document.createElement('td');
+    const description = document.createElement('span');
+    description.className = 'record-content';
+    description.textContent = item.project || item.note || '—';
+    projectCell.append(description);
+    if (item.content) {
+      const contentText = document.createElement('small');
+      contentText.textContent = `内容：${item.content}`;
+      projectCell.append(document.createElement('br'), contentText);
+    }
     if (state.ledgerScope === 'household' && item.createdBy) {
       const attribution = document.createElement('small');
       attribution.textContent = `记录人：${item.createdBy}`;
-      note.append(document.createElement('br'), attribution);
+      projectCell.append(document.createElement('br'), attribution);
     }
-    note.title = item.note || '';
+    projectCell.title = [item.project, item.content].filter(Boolean).join(' · ');
     const date = document.createElement('td');
-    date.textContent = item.occurredOn;
+    const dateLabel = document.createElement('span');
+    dateLabel.className = 'record-date';
+    dateLabel.textContent = item.occurredOn;
+    date.append(dateLabel);
+    const placeAndTime = [item.detailTime, item.location].filter(Boolean).join(' · ');
+    if (placeAndTime) {
+      const details = document.createElement('small');
+      details.textContent = placeAndTime;
+      date.append(document.createElement('br'), details);
+    }
     const amountCell = document.createElement('td');
     const amount = document.createElement('span');
     amount.className = `record-amount ${item.kind === 'income' ? 'amount-income' : 'amount-expense'}`;
@@ -623,7 +654,7 @@ async function loadRecords() {
     actions.className = 'table-actions';
     actions.append(actionButton('edit', item), actionButton('delete', item));
     actionCell.append(actions);
-    row.append(categoryCell, note, date, amountCell, actionCell);
+    row.append(categoryCell, projectCell, date, amountCell, actionCell);
     body.append(row);
   }
   query('.records-table').hidden = !state.records.length;
@@ -660,7 +691,10 @@ function openEntry(item = null) {
   query('[name="amount"]').value = item ? (item.amount / 100).toFixed(2) : '';
   query('[name="category"]').value = item?.category ?? state.categories[state.kind][0];
   query('[name="occurredOn"]').value = item?.occurredOn ?? today();
-  query('[name="note"]').value = item?.note ?? '';
+  query('[name="detailTime"]').value = item?.detailTime ?? '';
+  query('[name="location"]').value = item?.location ?? (!item && state.profileType === 'student' ? '学校' : '');
+  query('[name="content"]').value = item?.content ?? '';
+  query('[name="project"]').value = item?.project ?? item?.note ?? '';
   errorMessage(query('#entry-error'));
   query('#entry-dialog').showModal();
   window.setTimeout(() => query('[name="amount"]').focus(), 40);
@@ -730,7 +764,7 @@ async function importCsv(file) {
 }
 
 function downloadTemplate() {
-  const content = `\uFEFFdate,type,category,amount,note\r\n${today()},expense,餐饮,26.50,学校食堂午餐\r\n${today()},income,兼职,500.00,设计稿结算\r\n`;
+  const content = `\uFEFFdate,time,type,category,amount,location,project,content\r\n${today()},12:30:00,expense,餐饮,26.50,学校,"午饭，外卖",土豆牛肉盖浇饭\r\n${today()},18:00:00,income,兼职,500.00,,兼职结算,设计稿\r\n`;
   const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }));
   const link = document.createElement('a');
   link.href = url;
@@ -969,6 +1003,15 @@ function bindEvents() {
   query('[data-empty-add]').addEventListener('click', () => openEntry());
   all('[data-close-dialog]').forEach((button) => button.addEventListener('click', () => query('#entry-dialog').close()));
   all('.entry-type').forEach((button) => button.addEventListener('click', () => setEntryKind(button.dataset.kind)));
+  all('[data-trend-mode]').forEach((button) => button.addEventListener('click', () => {
+    state.trendMode = button.dataset.trendMode;
+    all('[data-trend-mode]').forEach((tab) => {
+      const selected = tab === button;
+      tab.classList.toggle('is-active', selected);
+      tab.setAttribute('aria-pressed', String(selected));
+    });
+    if (state.dashboard) renderTrend(state.dashboard);
+  }));
   query('#entry-form').addEventListener('submit', saveEntry);
   query('#entry-dialog').addEventListener('click', (event) => {
     if (event.target === event.currentTarget) event.currentTarget.close();

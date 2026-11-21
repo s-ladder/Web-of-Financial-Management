@@ -152,11 +152,19 @@ const postgresSchema = `
     kind TEXT NOT NULL CHECK (kind IN ('expense', 'income')),
     amount BIGINT NOT NULL CHECK (amount > 0),
     category TEXT NOT NULL,
+    project TEXT NOT NULL DEFAULT '',
     note TEXT NOT NULL DEFAULT '',
     occurred_on TEXT NOT NULL,
+    detail_time TEXT,
+    location TEXT,
+    content TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   ALTER TABLE transactions ADD COLUMN IF NOT EXISTS household_id BIGINT REFERENCES households(id) ON DELETE CASCADE;
+  ALTER TABLE transactions ADD COLUMN IF NOT EXISTS project TEXT NOT NULL DEFAULT '';
+  ALTER TABLE transactions ADD COLUMN IF NOT EXISTS detail_time TEXT;
+  ALTER TABLE transactions ADD COLUMN IF NOT EXISTS location TEXT;
+  ALTER TABLE transactions ADD COLUMN IF NOT EXISTS content TEXT;
   CREATE INDEX IF NOT EXISTS transactions_user_date ON transactions(user_id, occurred_on DESC, id DESC);
   CREATE INDEX IF NOT EXISTS transactions_user_category ON transactions(user_id, category);
   CREATE INDEX IF NOT EXISTS transactions_household_date ON transactions(household_id, occurred_on DESC, id DESC);
@@ -170,6 +178,7 @@ export async function createDatabase(databasePath, { seedDemo = false, databaseU
       for (const statement of postgresSchema.split(';').map((item) => item.trim()).filter(Boolean)) {
         await database.exec(statement);
       }
+      await database.run("UPDATE transactions SET project = note WHERE project = '' AND note <> ''");
       if (seedDemo) await seedDemoAccount(database);
       return database;
     } catch (error) {
@@ -226,8 +235,12 @@ export async function createDatabase(databasePath, { seedDemo = false, databaseU
       kind TEXT NOT NULL CHECK (kind IN ('expense', 'income')),
       amount INTEGER NOT NULL CHECK (amount > 0),
       category TEXT NOT NULL,
+      project TEXT NOT NULL DEFAULT '',
       note TEXT NOT NULL DEFAULT '',
       occurred_on TEXT NOT NULL,
+      detail_time TEXT,
+      location TEXT,
+      content TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS transactions_user_date ON transactions(user_id, occurred_on DESC, id DESC);
@@ -242,6 +255,12 @@ export async function createDatabase(databasePath, { seedDemo = false, databaseU
   if (!transactionColumns.some((column) => column.name === 'household_id')) {
     db.exec('ALTER TABLE transactions ADD COLUMN household_id INTEGER REFERENCES households(id) ON DELETE CASCADE');
   }
+  for (const column of ['project', 'detail_time', 'location', 'content']) {
+    if (!transactionColumns.some((existing) => existing.name === column)) {
+      db.exec(`ALTER TABLE transactions ADD COLUMN ${column} ${column === 'project' ? "TEXT NOT NULL DEFAULT ''" : 'TEXT'}`);
+    }
+  }
+  db.exec("UPDATE transactions SET project = note WHERE project = '' AND note <> ''");
   db.exec('CREATE INDEX IF NOT EXISTS transactions_household_date ON transactions(household_id, occurred_on DESC, id DESC)');
 
   if (seedDemo) await seedDemoAccount(db);
@@ -277,9 +296,9 @@ async function seedDemoAccount(db) {
       const date = new Date(today);
       date.setDate(date.getDate() - daysAgo);
       await transaction.run(`
-        INSERT INTO transactions (user_id, kind, amount, category, note, occurred_on)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `, userId, kind, amount, category, note, localDate(date));
+        INSERT INTO transactions (user_id, kind, amount, category, project, note, occurred_on)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, userId, kind, amount, category, note, note, localDate(date));
     }
   });
 }

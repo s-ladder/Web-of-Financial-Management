@@ -48,9 +48,9 @@ Express（server/index.js、server/app.js）
 | `sessions` | `token_hash`、`user_id`、`expires_at` | 服务端会话记录；用户外键带 `ON DELETE CASCADE`。 |
 | `households` | `id`、`name`、`invite_code`、`created_by`、`created_at` | 家庭账本及其唯一邀请码。 |
 | `household_members` | `household_id`、`user_id`、`role`、`joined_at` | 家庭成员关系；角色为 `owner` 或 `member`，每个账户最多属于一个家庭组。 |
-| `transactions` | `id`、`user_id`、`household_id`、`kind`、`amount`、`category`、`note`、`occurred_on`、`created_at` | 收支流水；`user_id` 表示记录人，`household_id` 为空表示个人账本，非空表示共享家庭账本。 |
+| `transactions` | `id`、`user_id`、`household_id`、`kind`、`amount`、`category`、`project`、`note`、`occurred_on`、`detail_time`、`location`、`content`、`created_at` | 收支流水；`user_id` 表示记录人，`household_id` 为空表示个人账本，非空表示共享家庭账本。项目用于标注消费场景，`note` 为旧版兼容字段。具体时间、地点、内容为可空字段，日期与时间分列保存。 |
 
-金额在数据库中以整数分保存，输入金额限制为正数且不超过 1 亿元；日期以 `YYYY-MM-DD` 字符串保存。SQLite 使用 `INTEGER` 主键和金额，PostgreSQL 使用 `BIGSERIAL` 主键和 `BIGINT` 金额。
+金额在数据库中以整数分保存，输入金额限制为正数且不超过 1 亿元；日期以 `YYYY-MM-DD` 字符串保存，具体时间以 `HH:mm:ss` 文本保存。学生身份的新建表单默认预填“学校”，用户仍可修改或清空；兼容旧接口或不含地点列的旧 CSV 时才为学生补上“学校”。为旧版 transactions 表增加 `project` 字段时，会将原 `note` 复制到 `project`；`note` 列保留作为数据兼容字段，已填备注因此转为项目，不会丢失。SQLite 使用 `INTEGER` 主键和金额，PostgreSQL 使用 `BIGSERIAL` 主键和 `BIGINT` 金额。
 
 所有账户共享数据库和相同表结构，**不是**每位用户独立数据库或独立 schema。隔离依靠服务端会话确定的用户 ID、家庭成员关系与查询条件实现。个人账本查询会同时限定当前 `user_id` 与 `household_id IS NULL`；家庭模式先由服务端确认成员关系，再限定到成员所属的单一 `household_id`。流水新增或导入时，记录人 ID 来自会话，账本归属由已验证的请求范围决定，不接受客户端传入其他用户或家庭的 ID。家庭组任意成员可查看、修改、删除共享流水；创建者可更换邀请码和移除普通成员，普通成员可退出。项目没有数据库行级安全策略（RLS），因此隔离边界在应用代码中。
 
@@ -64,7 +64,7 @@ Express（server/index.js、server/app.js）
 - 登录或注册成功时生成 32 字节随机会话令牌，以 Base64URL 编码交给浏览器；数据库只保存令牌的 SHA-256 哈希。会话有效期为 7 天，不依赖进程内存，数据库保持可用时应用重启后仍可验证。登出会删除该会话记录并清空 Cookie。
 - Cookie 名为 `fencun_session`，设置 `HttpOnly`、`SameSite=Lax`、`Path=/` 和 7 天 `Max-Age`；生产模式另加 `Secure`。生产模式信任一个反向代理跳数，以支持部署平台代理后的请求信息。
 - 服务端关闭 `X-Powered-By`，并设置 `X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy` 和 Content Security Policy。CSP 的样式策略允许 `'unsafe-inline'`。JSON 请求体上限为 64 KB；导入 CSV 请求上限为 2 MB。参数值通过数据库绑定参数传递。
-- 前端将用户名、分类、备注和错误信息写入 DOM 时使用 `textContent`，而不是把用户内容拼入 HTML 字符串。
+- 前端将用户名、分类、项目、内容和错误信息写入 DOM 时使用 `textContent`，而不是把用户内容拼入 HTML 字符串。
 - 演示账户为 `demo@fencun.local` / `Fencun2026!`，只在非生产模式且未设置 `DISABLE_DEMO=true` 时开放；生产模式下演示登录路由返回 404。生产部署不可将环境配置成非生产模式。
 - 登录失败限速在进程内按 IP 计数：15 分钟窗口内达到 10 次失败后，认证中间件拒绝该 IP 的后续请求。该状态不跨进程或重启共享，也不是持久化的全局限流。
 
@@ -84,7 +84,7 @@ Express（server/index.js、server/app.js）
 | `POST /api/auth/demo` | 仅演示模式 | 创建演示账户会话；生产禁用。 |
 | `GET /api/categories` | 登录 | 返回收入与支出分类。 |
 | `GET /api/dashboard?month=YYYY-MM` | 登录 | 返回月度汇总、上月对照、完整支出分类、逐日收支、最大单笔支出、最近六个月趋势和最近记录。 |
-| `GET /api/transactions?month=YYYY-MM&kind=expense&q=...` | 登录 | 按月份、类型和分类/备注搜索流水；单次最多返回 1,000 条。 |
+| `GET /api/transactions?month=YYYY-MM&kind=expense&q=...` | 登录 | 按月份、类型和分类/项目/时间/地点/内容搜索流水；单次最多返回 1,000 条。 |
 | `POST /api/transactions` | 登录 | 新建一条当前用户流水。 |
 | `PUT /api/transactions/:id` | 登录 | 更新当前用户拥有的流水。 |
 | `DELETE /api/transactions/:id` | 登录 | 删除当前用户拥有的流水，成功返回 `204`。 |
@@ -96,8 +96,8 @@ Express（server/index.js、server/app.js）
 ## 前端渲染
 
 - `public/index.html` 提供登录/注册、总览、流水列表和录入对话框的静态骨架；`public/app.js` 作为原生 ES module 执行，不经过转译或打包。
-- 页面通过 DOM API 建立流水行、分类列表和图表；六个月收支趋势与逐日支出图以原生 SVG 绘制，分类占比、月份比较条以 CSS 宽度条显示，不依赖图表库。`Intl.NumberFormat` 用于人民币显示，`Intl.DateTimeFormat` 用于日期展示。
-- 总览提供月度收支汇总、六个月趋势和前六个支出分类；独立的“数据分析”视图提供支出环比、按有支出的日期计算的日均支出、结余率、消费天数、逐日支出图、上月收入/支出对照、全部支出分类占比和最大单笔支出。
+- 页面通过 DOM API 建立流水行、分类列表和图表；收支走势图支持最近六个月按月查看或选择月份后按日查看，并以原生 SVG 绘制；每日支出分析图同样使用 SVG，分类占比、月份比较条以 CSS 宽度条显示，不依赖图表库。`Intl.NumberFormat` 用于人民币显示，`Intl.DateTimeFormat` 用于日期展示。
+- 总览提供月度收支汇总、可切换的月度/逐日收支趋势和前六个支出分类；独立的“数据分析”视图提供支出环比、按有支出的日期计算的日均支出、结余率、消费天数、逐日支出图、上月收入/支出对照、全部支出分类占比和最大单笔支出。
 - 所有分析数据由已登录用户的服务端查询产生，并按会话中的 `user_id` 过滤。选月后，汇总、对照、分类、逐日序列和最大单笔使用同一个月参数；逐日数组包含该月的每个自然日，没有流水的日期以 0 元显示。
 - 分析口径：支出环比为 `(本月支出 - 上月支出) / 上月支出`，上月没有支出时显示“新基准”而不伪造百分比；有消费日均为本月支出总额除以至少有一笔支出的日期数；结余率为 `(本月收入 - 本月支出) / 本月收入`，无收入时不计算。它们仅描述账本已录入流水，不是预算预测或投资回报指标。
 - 登录欢迎区使用项目内静态图片 `public/images/welcome-landscape.jpg`；图片在部署前已本地化，不依赖浏览器访问第三方图片 CDN。图片来自 Unsplash，并在页面标注来源；Unsplash 官方许可允许在遵守其条款的前提下免费使用图片，署名虽非必需但受到鼓励。请查看[Unsplash License](https://unsplash.com/license)。
@@ -106,9 +106,9 @@ Express（server/index.js、server/app.js）
 
 ## CSV 导入与导出
 
-模板及导出列为 `date,type,category,amount,note`。日期使用 `YYYY-MM-DD`；类型可用 `expense` / `income` 或“支出”/“收入”；分类必须属于服务端固定分类；金额最多两位小数；备注可省略，最长 120 个字符。导入最多 1,000 条记录，文件最大 2 MB。解析和验证全部行后，才在数据库事务中写入；任一行失败时不导入部分记录。CSV 由项目内的小型解析器处理，不提供方言自动识别；建议使用随页面提供的模板。
+模板及导出列为 `date,time,type,category,amount,location,project,content`。`date`、`type`、`category` 和 `amount` 必填；其余字段可省略。“项目”表示消费场景（如“午饭，外卖”），“内容”表示具体物品（如“土豆牛肉盖浇饭”）。日期使用 `YYYY-MM-DD`；具体时间可用 `HH:mm:ss` 或 `HH:mm`；类型可用 `expense` / `income` 或“支出”/“收入”；分类必须属于服务端固定分类；金额最多两位小数。地点最长 80 字，项目与内容各最长 120 字。学生用户导入的新流水如果 CSV 不含地点列，会记录为“学校”；如果 CSV 含有但对应单元格为空，则地点保持为空。为兼容旧文件，导入仍识别旧 `note` / `备注` 列并将其值读作项目；原 `date,type,category,amount,note` 文件仍可导入。示例位于 `docs/import-example.csv`，页面模板按钮提供当天日期的 CSV 文件。
 
-导出范围是当前用户的全部流水，而不是当前筛选月份。导出为 UTF-8 BOM 与 CRLF 换行的 CSV，金额转换回元；备注等以 `=`, `+`, `-`, `@` 或控制字符开头的单元格会加文本前缀，以降低电子表格公式注入风险。导入采用追加写入，没有去重、覆盖或更新匹配记录的逻辑。
+导出范围是当前用户的全部流水，而不是当前筛选月份。导出为 UTF-8 BOM 与 CRLF 换行的 CSV，金额转换回元；新增字段以 `=`, `+`, `-`, `@` 或控制字符开头的单元格会加文本前缀，以降低电子表格公式注入风险。导入采用追加写入，没有去重、覆盖或更新匹配记录的逻辑。
 
 CSV 仅迁移流水，不包含账户、密码哈希、会话或其他用户资料。因此 SQLite 与 PostgreSQL 间切换时需要分别处理账户创建；CSV 不是数据库级备份，也不包含数据库 schema。
 
@@ -165,7 +165,7 @@ Render 的 `/api/config` 健康检查只返回应用配置，不执行数据库�
 - **家庭共享账本：** `household_members` 授权访问一个家庭 `household_id`；个人流水通过 `household_id IS NULL` 与家庭流水隔离。邀请码没有自动过期时间；家庭成员均可编辑与删除共享流水，创建者可更换邀请码和移除普通成员，当前没有细粒度权限和审计日志。
 - **身份只是分类模板：** 学生、上班族、家庭身份不会限制用户账户权限；更改身份设置与成员资料管理尚未提供。
 - **SQLite API 是同步的：** `DatabaseSync` 调用虽然被包装成适配器 Promise，但底层 I/O 仍在 Node 主线程同步执行。对并发较高或持续生产负载不理想；部署选择 PostgreSQL 也避免依赖临时 SQLite 文件。
-- **轻量启动迁移：** 启动会为旧 schema 补齐 `users.profile_type` 和 `transactions.household_id`，并创建家庭相关表和索引；尚无独立的版本化迁移工具。更复杂的数据回填或约束变更应采用显式迁移脚本并验证两种数据库。
+- **轻量启动迁移：** 启动会为旧 schema 补齐 `users.profile_type`、`transactions.household_id`、`detail_time`、`location` 和 `content`，并创建家庭相关表和索引；三个可选流水字段以空值兼容旧行，不会回填或更新已录入的账目。项目尚无独立的版本化迁移工具；更复杂的数据回填或约束变更应采用显式迁移脚本并验证两种数据库。
 - **PostgreSQL 占位符转换很轻量：** 适配器通过正则把每个 `?` 替换成 `$n`，不是 SQL 解析器；当前 SQL 参数位点符合该约定，但将来 SQL 字符串字面量或注释中若出现问号，转换可能出错。
 - **内存限流有部署边界：** 登录失败计数存在单进程 `Map` 中，扩展多个实例后计数不共享；应用重启会重置计数。
 - **列表不分页：** 月度流水接口最多返回 1,000 条，没有游标/偏移分页；超出上限时 UI 无法浏览该月全部记录。CSV 导出不受此列表上限影响。

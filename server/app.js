@@ -68,10 +68,31 @@ function safeTransaction(input) {
   if (Number.isNaN(parsedDate.valueOf()) || parsedDate.toISOString().slice(0, 10) !== input.occurredOn) {
     return { error: '请选择有效日期。' };
   }
-  const note = typeof input.note === 'string' ? input.note.trim() : '';
-  if (note.length > 120) return { error: '备注不能超过 120 个字。' };
+  const projectValue = Object.hasOwn(input, 'project') ? input.project : input.note;
+  const project = typeof projectValue === 'string' ? projectValue.trim() : '';
+  const detailTime = typeof input.detailTime === 'string' ? input.detailTime.trim() : '';
+  const location = typeof input.location === 'string' ? input.location.trim() : '';
+  const content = typeof input.content === 'string' ? input.content.trim() : '';
+  if (project.length > 120) return { error: '项目不能超过 120 个字。' };
+  if (detailTime && !/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(detailTime)) {
+    return { error: '具体时间请使用 24 小时制时分秒。' };
+  }
+  if (location.length > 80) return { error: '地点不能超过 80 个字。' };
+  if (content.length > 120) return { error: '内容不能超过 120 个字。' };
 
-  return { value: { kind: input.kind, amount: amountCents, category: input.category, note, occurredOn: input.occurredOn } };
+  return {
+    value: {
+      kind: input.kind,
+      amount: amountCents,
+      category: input.category,
+      project,
+      note: project,
+      occurredOn: input.occurredOn,
+      detailTime: detailTime && detailTime.length === 5 ? `${detailTime}:00` : detailTime,
+      location,
+      content,
+    },
+  };
 }
 
 function parseCsv(text) {
@@ -407,7 +428,8 @@ export async function createApp({
     `, ledgerValue, monthStart, nextMonthStart);
     const dailyByDate = new Map(dailyRows.map((row) => [row.date, row]));
     const largestExpense = await db.get(`
-      SELECT id, category, note, amount, occurred_on AS "occurredOn"
+      SELECT id, category, COALESCE(NULLIF(project, ''), note, '') AS project,
+        COALESCE(NULLIF(project, ''), note, '') AS note, amount, occurred_on AS "occurredOn"
       FROM transactions
       WHERE ${ledgerCondition} AND kind = 'expense' AND occurred_on >= ? AND occurred_on < ?
       ORDER BY amount DESC, occurred_on DESC, id DESC LIMIT 1
@@ -423,7 +445,8 @@ export async function createApp({
     `, ledgerValue, range.first, range.last);
     const trendByMonth = new Map(trendRows.map((row) => [row.month, row]));
     const recent = await db.all(`
-      SELECT id, kind, amount, category, note, occurred_on AS "occurredOn",
+      SELECT id, kind, amount, category, COALESCE(NULLIF(project, ''), note, '') AS project,
+        COALESCE(NULLIF(project, ''), note, '') AS note, occurred_on AS "occurredOn",
         (SELECT name FROM users WHERE users.id = transactions.user_id) AS "createdBy"
       FROM transactions WHERE ${ledgerCondition} AND substr(occurred_on, 1, 7) = ?
       ORDER BY occurred_on DESC, id DESC LIMIT 7
@@ -479,26 +502,38 @@ export async function createApp({
       params.push(kind);
     }
     if (query) {
-      conditions.push('(lower(category) LIKE lower(?) OR lower(note) LIKE lower(?))');
-      params.push(`%${query}%`, `%${query}%`);
+      conditions.push('(lower(category) LIKE lower(?) OR lower(project) LIKE lower(?) OR lower(detail_time) LIKE lower(?) OR lower(location) LIKE lower(?) OR lower(content) LIKE lower(?))');
+      params.push(...Array.from({ length: 5 }, () => `%${query}%`));
     }
     const rows = await db.all(`
-      SELECT id, kind, amount, category, note, occurred_on AS "occurredOn",
+      SELECT id, kind, amount, category, project, project AS note, occurred_on AS "occurredOn",
+        detail_time AS "detailTime", location, content,
         (SELECT name FROM users WHERE users.id = transactions.user_id) AS "createdBy"
       FROM transactions WHERE ${conditions.join(' AND ')}
       ORDER BY occurred_on DESC, id DESC LIMIT 1000
     `, ...params);
-    return res.json({ month, transactions: rows.map((row) => ({ ...row, id: Number(row.id), amount: Number(row.amount) })) });
+    return res.json({ month, transactions: rows.map((row) => ({
+      ...row,
+      id: Number(row.id),
+      amount: Number(row.amount),
+      detailTime: row.detailTime ?? '',
+      location: row.location ?? '',
+      content: row.content ?? '',
+      project: row.project ?? row.note ?? '',
+    })) });
   });
 
   app.post('/api/transactions', requireUser, requireLedger, async (req, res) => {
     const validated = safeTransaction(req.body);
     if (validated.error) return res.status(400).json({ error: validated.error });
     const item = validated.value;
+    const input = req.body && typeof req.body === 'object' ? req.body : {};
+    if (!Object.hasOwn(input, 'location') && req.user.profileType === 'student') item.location = '学校';
     const result = await db.run(`
-      INSERT INTO transactions (user_id, household_id, kind, amount, category, note, occurred_on)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, req.user.id, req.ledger.householdId, item.kind, item.amount, item.category, item.note, item.occurredOn);
+      INSERT INTO transactions (user_id, household_id, kind, amount, category, project, note, occurred_on, detail_time, location, content)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, req.user.id, req.ledger.householdId, item.kind, item.amount, item.category, item.project, item.note, item.occurredOn,
+    item.detailTime, item.location, item.content);
     return res.status(201).json({ id: Number(result.lastInsertRowid), ...item, createdBy: req.user.name });
   });
 
@@ -508,10 +543,20 @@ export async function createApp({
     const validated = safeTransaction(req.body);
     if (validated.error) return res.status(400).json({ error: validated.error });
     const item = validated.value;
+    const existing = await db.get(`
+      SELECT detail_time AS "detailTime", location, content
+      FROM transactions WHERE id = ? AND ${req.ledger.condition}
+    `, transactionId, req.ledger.value);
+    if (!existing) return res.status(404).json({ error: '找不到这笔记录。' });
+    const input = req.body && typeof req.body === 'object' ? req.body : {};
+    if (!Object.hasOwn(input, 'detailTime')) item.detailTime = existing.detailTime ?? '';
+    if (!Object.hasOwn(input, 'location')) item.location = existing.location ?? '';
+    if (!Object.hasOwn(input, 'content')) item.content = existing.content ?? '';
     const result = await db.run(`
-      UPDATE transactions SET kind = ?, amount = ?, category = ?, note = ?, occurred_on = ?
+      UPDATE transactions SET kind = ?, amount = ?, category = ?, project = ?, note = ?, occurred_on = ?, detail_time = ?, location = ?, content = ?
       WHERE id = ? AND ${req.ledger.condition}
-    `, item.kind, item.amount, item.category, item.note, item.occurredOn, transactionId, req.ledger.value);
+    `, item.kind, item.amount, item.category, item.project, item.note, item.occurredOn, item.detailTime, item.location, item.content,
+    transactionId, req.ledger.value);
     if (result.changes === 0) return res.status(404).json({ error: '找不到这笔记录。' });
     return res.json({ id: transactionId, ...item });
   });
@@ -526,7 +571,7 @@ export async function createApp({
 
   app.get('/api/export.csv', requireUser, requireLedger, async (req, res) => {
     const rows = await db.all(`
-      SELECT occurred_on AS "date", kind, category, amount, note
+      SELECT occurred_on AS "date", kind, category, amount, project, detail_time AS "detailTime", location, content
       FROM transactions WHERE ${req.ledger.condition} ORDER BY occurred_on DESC, id DESC
     `, req.ledger.value);
     const escapeCell = (value) => {
@@ -535,13 +580,16 @@ export async function createApp({
       return `"${spreadsheetSafe.replaceAll('"', '""')}"`;
     };
     const lines = [
-      ['date', 'type', 'category', 'amount', 'note'].join(','),
+      ['date', 'time', 'type', 'category', 'amount', 'location', 'project', 'content'].join(','),
       ...rows.map((row) => [
         row.date,
+        row.detailTime ?? '',
         row.kind,
         row.category,
         (Number(row.amount) / 100).toFixed(2),
-        row.note,
+        row.location ?? '',
+        row.project ?? '',
+        row.content ?? '',
       ].map(escapeCell).join(',')),
     ];
     res.set({
@@ -568,9 +616,14 @@ export async function createApp({
     const typeIndex = locate('type', 'kind', '类型');
     const categoryIndex = locate('category', '分类');
     const amountIndex = locate('amount', '金额');
-    const noteIndex = locate('note', 'description', '备注', '说明');
+    const timeIndex = locate('time', 'detail_time', '具体时间', '时间');
+    const locationIndex = locate('location', '地点');
+    const contentIndex = locate('content', 'item', '具体内容', '内容');
+    const projectIndex = locate('project', '项目');
+    const legacyNoteIndex = locate('note', 'description', '备注', '说明');
+    const projectValueIndex = projectIndex >= 0 ? projectIndex : legacyNoteIndex;
     if ([dateIndex, typeIndex, categoryIndex, amountIndex].some((index) => index < 0)) {
-      return res.status(400).json({ error: '表头需包含 date、type、category、amount；note 为可选。' });
+      return res.status(400).json({ error: '表头需包含 date、type、category、amount；time、location、project、content 均可选。' });
     }
 
     const validatedRows = [];
@@ -583,10 +636,14 @@ export async function createApp({
         kind,
         amount: amountFromCsv(row[amountIndex]),
         category: row[categoryIndex].trim(),
-        note: noteIndex < 0 ? '' : row[noteIndex],
+        project: projectValueIndex < 0 ? '' : row[projectValueIndex],
         occurredOn: row[dateIndex].trim(),
+        detailTime: timeIndex < 0 ? '' : row[timeIndex],
+        location: locationIndex < 0 ? '' : row[locationIndex],
+        content: contentIndex < 0 ? '' : row[contentIndex],
       });
       if (validated.error) return res.status(400).json({ error: `第 ${index + 1} 行：${validated.error}` });
+      if (locationIndex < 0 && req.user.profileType === 'student') validated.value.location = '学校';
       validatedRows.push(validated.value);
     }
 
@@ -594,9 +651,10 @@ export async function createApp({
       await db.transaction(async (transaction) => {
         for (const item of validatedRows) {
           await transaction.run(`
-            INSERT INTO transactions (user_id, household_id, kind, amount, category, note, occurred_on)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `, req.user.id, req.ledger.householdId, item.kind, item.amount, item.category, item.note, item.occurredOn);
+            INSERT INTO transactions (user_id, household_id, kind, amount, category, project, note, occurred_on, detail_time, location, content)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, req.user.id, req.ledger.householdId, item.kind, item.amount, item.category, item.project, item.note, item.occurredOn,
+          item.detailTime, item.location, item.content);
         }
       });
       return res.status(201).json({ imported: validatedRows.length });
